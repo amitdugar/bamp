@@ -31,6 +31,7 @@ readonly DATABASE="🗄️"
 readonly FOLDER="📁"
 readonly LOCK="🔐"
 readonly KEY="🔑"
+readonly BEER="🍺"
 
 # Global configuration
 readonly BREW_PREFIX="$(brew --prefix 2>/dev/null || echo "/opt/homebrew")"

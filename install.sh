@@ -15,12 +15,56 @@ BIN_DIR=""
 SHELL_NAME=""
 PROFILE_FILE=""
 
-# Check prerequisites
+# Download and source bamp-common first - everything depends on this
+download_and_source_common() {
+    echo "🍺 BAMP Global Installer"
+    echo "========================"
+    echo "Downloading BAMP common functions..."
+
+    # Create a temporary directory for bamp-common
+    local temp_dir=$(mktemp -d)
+    local common_script="$temp_dir/bamp-common"
+
+    # Download bamp-common.sh but save as bamp-common - if this fails, we can't proceed
+    if ! curl -fsSL "$BASE_URL/bamp-common.sh" -o "$common_script" 2>/dev/null; then
+        echo "ERROR: Failed to download bamp-common.sh from $BASE_URL/bamp-common.sh"
+        echo "Cannot proceed with installation."
+        rm -rf "$temp_dir"
+        exit 1
+    fi
+
+    # Make it executable and source it
+    chmod +x "$common_script"
+
+    # Source it to get all the common functions
+    if ! source "$common_script"; then
+        echo "ERROR: Failed to load bamp-common functions"
+        rm -rf "$temp_dir"
+        exit 1
+    fi
+
+    # Now we have all the common functions and can use proper logging
+    log_success "BAMP common functions loaded successfully"
+
+    # Clean up temp directory when script exits
+    trap "rm -rf '$temp_dir'" EXIT
+}
+
+print_header() {
+    echo
+    log_info "${BEER} BAMP Global Installer ${BEER}"
+    echo "┌────────────────────────────────────────────────────────────────┐"
+    echo "│  Install BAMP commands globally on your system                │"
+    echo "└────────────────────────────────────────────────────────────────┘"
+    echo
+}
+
+# Check prerequisites (now using common functions)
 check_prerequisites() {
     log_info "Checking prerequisites..."
 
     # Check if curl is available
-    if ! command -v curl >/dev/null 2>&1; then
+    if ! command_exists curl; then
         log_error "curl is required but not installed"
         log_info "Please install curl and try again"
         exit 1
@@ -33,33 +77,6 @@ check_prerequisites() {
     fi
 
     log_success "Prerequisites check passed"
-}
-
-# Download and source bamp-common
-setup_common_functions() {
-    log_info "Setting up BAMP common functions..."
-
-    # Create a temporary directory for bamp-common
-    local temp_dir=$(mktemp -d)
-    local common_script="$temp_dir/bamp-common"
-
-    # Download bamp-common
-    if ! curl -fsSL "$BASE_URL/bamp-common" -o "$common_script"; then
-        log_error "Failed to download bamp-common"
-        rm -rf "$temp_dir"
-        exit 1
-    fi
-
-    # Make it executable
-    chmod +x "$common_script"
-
-    # Source it to get all the common functions
-    source "$common_script"
-
-    log_success "BAMP common functions loaded"
-
-    # Clean up temp directory when script exits
-    trap "rm -rf '$temp_dir'" EXIT
 }
 
 # Detect shell and profile file
@@ -107,17 +124,12 @@ detect_shell() {
     log_info "Using profile: $PROFILE_FILE"
 }
 
-# Create bin directory
+# Create bin directory (now using common functions)
 create_bin_directory() {
     BIN_DIR="$HOME/bin"
 
-    if [[ ! -d "$BIN_DIR" ]]; then
-        log_info "Creating $BIN_DIR directory..."
-        mkdir -p "$BIN_DIR"
-        log_success "Created $BIN_DIR"
-    else
-        log_info "Directory $BIN_DIR already exists"
-    fi
+    create_dir_if_not_exists "$BIN_DIR"
+    log_info "Using directory: $BIN_DIR"
 }
 
 # Download and install all BAMP scripts
@@ -125,12 +137,13 @@ download_and_install_scripts() {
     log_info "Downloading and installing BAMP scripts to $BIN_DIR..."
 
     # Define scripts to download with source:target mapping
+    # Note: source files have .sh extension on GitHub, but we save without extension locally
     local scripts=(
-        "bamp-common:bamp-common"
-        "bamp:bamp"
-        "bamp-vhost:bamp-vhost"
-        "bamp-mysql:bamp-mysql"
-        "bamp-uninstall:bamp-uninstall"
+        "bamp-common.sh:bamp-common"
+        "bamp.sh:bamp"
+        "bamp-vhost.sh:bamp-vhost"
+        "bamp-mysql.sh:bamp-mysql"
+        "bamp-uninstall.sh:bamp-uninstall"
     )
 
     local failed_downloads=0
@@ -189,7 +202,7 @@ update_path() {
     fi
 }
 
-# Test installation
+# Test installation (now using common functions)
 test_installation() {
     log_info "Testing BAMP installation..."
 
@@ -197,7 +210,7 @@ test_installation() {
     export PATH="$HOME/bin:$PATH"
 
     # Test if bamp command is available
-    if command -v bamp >/dev/null 2>&1; then
+    if command_exists bamp; then
         log_success "BAMP commands are now available globally!"
         echo ""
         log_info "Available commands:"
@@ -290,8 +303,10 @@ show_usage() {
 
 # Main installation process
 main() {
-    # Setup basic functionality
-    setup_emojis
+    # FIRST: Download and source bamp-common - everything depends on this
+    download_and_source_common
+
+    # NOW we can use all the common functions and proper logging
     print_header
 
     # Handle command line arguments
@@ -302,24 +317,19 @@ main() {
         check_prerequisites
         detect_shell
         create_bin_directory
-
-        # Download bamp-common first and source it
-        setup_common_functions
-
-        # Now we have all the common functions available
         download_and_install_scripts
         update_path
         test_installation
 
         echo ""
-        log_success "BAMP installation complete! $ROCKET"
+        log_success "BAMP installation complete! ${ROCKET}"
         echo ""
         log_info "Next steps:"
         echo "  1. Restart your terminal or run: ${CYAN}source $PROFILE_FILE${NC}"
         echo "  2. Try: ${CYAN}bamp --help${NC}"
         echo "  3. Install your development stack: ${CYAN}bamp${NC}"
         echo ""
-        log_info "Your BAMP development environment is ready! $BEER"
+        log_info "Your BAMP development environment is ready! ${BEER}"
         ;;
 
     "uninstall")
