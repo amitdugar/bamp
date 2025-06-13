@@ -52,7 +52,7 @@ download_and_source_common() {
 
 print_header() {
     echo
-    log_info "${BEER} BAMP Global Installer ${BEER}"
+    log_info "🍺 BAMP Global Installer 🍺"
     echo "┌────────────────────────────────────────────────────────────────┐"
     echo "│  Install BAMP commands globally on your system                │"
     echo "└────────────────────────────────────────────────────────────────┘"
@@ -329,7 +329,7 @@ main() {
         echo "  2. Try: ${CYAN}bamp --help${NC}"
         echo "  3. Install your development stack: ${CYAN}bamp${NC}"
         echo ""
-        log_info "Your BAMP development environment is ready! ${BEER}"
+        log_info "Your BAMP development environment is ready! 🍺"
         ;;
 
     "uninstall")
