@@ -27,6 +27,8 @@ OPTIONS:
     -s, --status        Show service status
     -r, --restart       Restart all services
     --stop              Stop all services
+    --composer-check    Check Composer PHP version alignment
+    --create-aliases    Create PHP version aliases for easy switching
     --uninstall         Uninstall all components (use with caution)
     --dry-run           Show what would be done without making changes
 
@@ -35,11 +37,13 @@ PHP_VERSION:
     Default: ${DEFAULT_PHP}
 
 Examples:
-    bamp                  # Install with default PHP ${DEFAULT_PHP}
-    bamp 8.4              # Install and switch to PHP 8.4
-    bamp --status         # Show current service status
-    bamp --restart        # Restart all services
-    bamp --dry-run        # Preview installation steps
+    bamp                     # Install with default PHP ${DEFAULT_PHP}
+    bamp 8.4                 # Install and switch to PHP 8.4
+    bamp --status            # Show current service status
+    bamp --composer-check    # Check Composer PHP version alignment
+    bamp --create-aliases    # Create PHP version aliases
+    bamp --restart           # Restart all services
+    bamp --dry-run           # Preview installation steps
 
 EOF
 }
@@ -106,7 +110,7 @@ show_status() {
         echo "  $status_icon $service ($status_text)"
     done
 
-    echo
+     echo
     log_info "PHP Configuration:"
     local current_php=$(get_current_php_version)
     if [[ -n "$current_php" ]]; then
@@ -118,8 +122,38 @@ show_status() {
             local php_cli_version=$("$php_path" -v | head -1)
             echo "  📋 CLI Version: $php_cli_version"
         fi
+
+        # Check PHP in PATH
+        if command_exists php; then
+            local path_php_version=$(php -v | head -1 | grep -o 'PHP [0-9]\+\.[0-9]\+\.[0-9]\+')
+            echo "  🔗 PATH PHP: $path_php_version"
+
+            # Check if PATH PHP matches Apache PHP
+            local path_php_short=$(echo "$path_php_version" | grep -o '[0-9]\+\.[0-9]\+')
+            if [[ "$path_php_short" == "$current_php" ]]; then
+                echo "  ✅ PATH PHP matches Apache PHP"
+            else
+                echo "  ⚠️  PATH PHP differs from Apache PHP"
+            fi
+        else
+            echo "  ❌ No PHP found in PATH"
+        fi
     else
         echo "  ❓ No PHP module loaded in Apache"
+    fi
+
+    # Check Composer
+    echo
+    log_info "🎼 Composer Status:"
+    if command_exists composer; then
+        local composer_version=$(composer --version 2>/dev/null | head -1)
+        echo "  ${CHECKMARK} $composer_version"
+
+        # Show which PHP Composer is using
+        local composer_php=$(composer config platform.php 2>/dev/null || echo "auto-detected")
+        echo "  🐘 Using PHP: $composer_php"
+    else
+        echo "  ❌ Composer not found"
     fi
 
     show_mysql_info
@@ -175,7 +209,7 @@ restart_services() {
 stop_services() {
     log_info "Stopping services..."
 
-    local services=("httpd" "mysql" "dnsmasq")
+    local services=("httpd" "mysql")
     for service in "${services[@]}"; do
         if service_running "$service"; then
             if [[ "$DRY_RUN" == true ]]; then
@@ -777,6 +811,7 @@ switch_php_version() {
 
     if [[ "$DRY_RUN" == true ]]; then
         log_info "Would switch Apache to PHP ${php_version}"
+        log_info "Would update PATH to use PHP ${php_version}"
         return 0
     fi
 
@@ -817,6 +852,13 @@ switch_php_version() {
         echo "AddType application/x-httpd-php .php" >>"$HTTPD_CONF"
     fi
 
+    # Test Apache config
+    if ! apache_config_test; then
+        log_error "Apache configuration test failed!"
+        log_info "Restoring backup configuration..."
+        return 1
+    fi
+
     # Restart Apache
     if ! restart_service httpd; then
         log_error "Failed to restart Apache"
@@ -824,7 +866,130 @@ switch_php_version() {
         return 1
     fi
 
+    # Update PATH for PHP CLI and Composer
+    update_php_path "$php_version"
+
+    # Check if aliases already exist before creating them
+    local shell_profile=""
+    case "$SHELL" in
+        */zsh) shell_profile="$HOME/.zshrc" ;;
+        */bash) shell_profile="$HOME/.bash_profile" ;;
+    esac
+
+    if [[ -n "$shell_profile" ]] && [[ -f "$shell_profile" ]]; then
+        if ! grep -q "# BAMP PHP Aliases" "$shell_profile"; then
+            log_info "Creating PHP version aliases for convenience..."
+            create_php_aliases
+        else
+            log_info "PHP aliases already exist (run 'bamp --create-aliases' to update)"
+        fi
+    fi
+
     log_success "Apache switched to PHP ${php_version}"
+    log_info "PHP CLI and Composer now use PHP ${php_version}"
+}
+
+update_php_path() {
+    local php_version="$1"
+    local php_bin_path="${BREW_PREFIX}/opt/php@${php_version}/bin"
+
+    # Update shell profile based on detected shell
+    local shell_profile=""
+    case "$SHELL" in
+        */zsh)
+            shell_profile="$HOME/.zshrc"
+            ;;
+        */bash)
+            shell_profile="$HOME/.bash_profile"
+            ;;
+        *)
+            log_warning "Unknown shell: $SHELL"
+            return 1
+            ;;
+    esac
+
+    # Remove existing PHP PATH entries
+    if [[ -f "$shell_profile" ]]; then
+        # Create backup
+        cp "$shell_profile" "${shell_profile}.bamp.backup"
+
+        # Remove old BAMP PHP PATH entries
+        grep -v "# BAMP PHP PATH" "$shell_profile" > "${shell_profile}.tmp"
+        mv "${shell_profile}.tmp" "$shell_profile"
+    fi
+
+    # Add new PHP PATH
+    cat >> "$shell_profile" << EOF
+
+# BAMP PHP PATH - Managed by BAMP script
+export PATH="${php_bin_path}:\$PATH"  # BAMP PHP PATH
+EOF
+
+    log_info "Updated $shell_profile to use PHP ${php_version}"
+    log_info "Run 'source $shell_profile' or restart your terminal to apply changes"
+}
+
+create_php_aliases() {
+    local shell_profile=""
+    case "$SHELL" in
+        */zsh)
+            shell_profile="$HOME/.zshrc"
+            ;;
+        */bash)
+            shell_profile="$HOME/.bash_profile"
+            ;;
+        *)
+            log_warning "Unknown shell: $SHELL"
+            return 1
+            ;;
+    esac
+
+    log_info "Creating PHP version aliases..."
+
+    # Remove existing BAMP aliases
+    if [[ -f "$shell_profile" ]]; then
+        grep -v "# BAMP PHP Aliases" "$shell_profile" > "${shell_profile}.tmp"
+        mv "${shell_profile}.tmp" "$shell_profile"
+    fi
+
+    # Add new aliases
+    cat >> "$shell_profile" << 'EOF'
+
+# BAMP PHP Aliases - Managed by BAMP script
+alias php82='/opt/homebrew/opt/php@8.2/bin/php'          # BAMP PHP Aliases
+alias php83='/opt/homebrew/opt/php@8.3/bin/php'          # BAMP PHP Aliases
+alias php84='/opt/homebrew/opt/php@8.4/bin/php'          # BAMP PHP Aliases
+alias composer82='/opt/homebrew/opt/php@8.2/bin/php /opt/homebrew/bin/composer'  # BAMP PHP Aliases
+alias composer83='/opt/homebrew/opt/php@8.3/bin/php /opt/homebrew/bin/composer'  # BAMP PHP Aliases
+alias composer84='/opt/homebrew/opt/php@8.4/bin/php /opt/homebrew/bin/composer'  # BAMP PHP Aliases
+EOF
+
+    log_success "PHP aliases created in $shell_profile"
+    echo "Usage examples:"
+    echo "  • php83 -v          # Use PHP 8.3"
+    echo "  • composer83 install # Use Composer with PHP 8.3"
+}
+
+check_composer_php_version() {
+    log_info "Composer PHP Version Check:"
+
+    if command_exists composer; then
+        local composer_php_version=$(composer --version 2>/dev/null | grep -o 'PHP [0-9]\+\.[0-9]\+\.[0-9]\+' | head -1)
+        echo "  🎼 Composer: $composer_php_version"
+
+        # Also show which PHP binary composer is using
+        local composer_php_path=$(which php)
+        echo "  📍 PHP binary: $composer_php_path"
+
+        if [[ -n "$composer_php_path" ]]; then
+            local php_version_output=$("$composer_php_path" -v | head -1)
+            echo "  🐘 PHP CLI: $php_version_output"
+        fi
+    else
+        echo "  ❌ Composer not found in PATH"
+    fi
+
+    echo
 }
 
 create_info_page() {
@@ -914,10 +1079,13 @@ show_completion_message() {
     echo "  • Check status: bamp --status"
     echo "  • Switch PHP: bamp 8.2"
     echo "  • Restart services: bamp --restart"
+    echo "  • Check Composer: bamp --composer-check"
+    echo "  • Create aliases: bamp --create-aliases"
     echo
     echo "💡 Pro Tips:"
     echo "  • Create virtual hosts with: bamp-vhost"
     echo "  • Use .test domains for local development"
+    echo "  • Use php83, composer83 aliases for specific versions"
     echo "  • Secure MySQL: mysql_secure_installation (optional)"
 
     # Fix the MySQL password detection logic
@@ -946,6 +1114,8 @@ main() {
     local php_version=""
     local show_status=false
     local restart_services=false
+    local composer_check=false
+    local create_aliases=false
 
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
@@ -968,6 +1138,14 @@ main() {
             ;;
         -r | --restart)
             restart_services=true
+            shift
+            ;;
+        --composer-check)
+            composer_check=true
+            shift
+            ;;
+        --create-aliases)
+            create_aliases=true
             shift
             ;;
         --uninstall)
@@ -994,6 +1172,18 @@ main() {
             ;;
         esac
     done
+
+    # Handle composer check
+    if [[ "$composer_check" == true ]]; then
+        check_composer_php_version
+        exit 0
+    fi
+
+    # Handle alias creation
+    if [[ "$create_aliases" == true ]]; then
+        create_php_aliases
+        exit 0
+    fi
 
     # Set default PHP version if none specified
     if [[ -z "$php_version" && "$show_status" == false && "$restart_services" == false ]]; then

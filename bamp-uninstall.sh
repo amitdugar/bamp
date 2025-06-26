@@ -119,7 +119,7 @@ show_file_locations() {
         "${BREW_PREFIX}/etc/php:PHP configuration"
         "${BREW_PREFIX}/etc/my.cnf:MySQL configuration"
         "${BREW_PREFIX}/var/mysql:MySQL databases"
-        "${BREW_PREFIX}/var/log/httpd:Apache logs"
+        ${LOG_DIR}:Apache logs"
         "/Users/$USER/Sites:Web documents"
         "/Users/$USER/.mkcert:SSL certificates"
         "/Users/$USER/.my.cnf:MySQL user config"
@@ -305,7 +305,7 @@ remove_configuration_files() {
         "${BREW_PREFIX}/etc/httpd"
         "${BREW_PREFIX}/etc/php"
         "${BREW_PREFIX}/etc/my.cnf"
-        "${BREW_PREFIX}/var/log/httpd"
+        "${LOG_DIR}"
     )
 
     if [[ "$KEEP_DATA" == false ]]; then
@@ -424,7 +424,7 @@ dry_run_preview() {
         "${BREW_PREFIX}/etc/httpd"
         "${BREW_PREFIX}/etc/php"
         "${BREW_PREFIX}/etc/my.cnf"
-        "${BREW_PREFIX}/var/log/httpd"
+        "${LOG_DIR}"
         "/Users/$USER/.mkcert"
     )
 

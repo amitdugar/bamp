@@ -231,7 +231,7 @@ create_database() {
     log_info "Creating database '$db_name'..."
 
     # Use MySQL 8.4 compatible charset and collation
-    $(get_mysql_cmd) -e "CREATE DATABASE \`${db_name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" || {
+    $(get_mysql_cmd) -e "CREATE DATABASE \`${db_name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;" || {
         log_error "Failed to create database"
         return 1
     }

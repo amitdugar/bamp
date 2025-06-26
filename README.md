@@ -332,7 +332,7 @@ export BAMP_MYSQL_PORT=3306
 # Apache
 ${BREW_PREFIX}/etc/httpd/httpd.conf              # Main Apache config
 ${BREW_PREFIX}/etc/httpd/extra/httpd-vhosts.conf # Virtual hosts
-${BREW_PREFIX}/var/log/httpd/                    # Apache logs
+${LOG_DIR}                    # Apache logs
 
 # PHP
 ${BREW_PREFIX}/etc/php/8.2/php.ini               # PHP configuration
@@ -359,7 +359,7 @@ sql_mode = "ONLY_FULL_GROUP_BY,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO
 
 # UTF8MB4 support
 character-set-server = utf8mb4
-collation-server = utf8mb4_unicode_ci
+collation-server = utf8mb4_0900_ai_ci
 
 # Performance settings optimized for local development
 max_connections = 200
