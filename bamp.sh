@@ -2,7 +2,6 @@
 
 set -euo pipefail
 
-
 # Get the directory where this script is actually located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
@@ -110,7 +109,7 @@ show_status() {
         echo "  $status_icon $service ($status_text)"
     done
 
-     echo
+    echo
     log_info "PHP Configuration:"
     local current_php=$(get_current_php_version)
     if [[ -n "$current_php" ]]; then
@@ -797,6 +796,12 @@ install_composer() {
     cd "$original_dir"
     rm -rf "$temp_dir"
 
+    # Get the current PHP version and update composer alias
+    local current_php_version=$(php -v | head -1 | grep -o 'PHP [0-9]\+\.[0-9]\+' | grep -o '[0-9]\+\.[0-9]\+')
+    if [[ -n "$current_php_version" ]]; then
+        update_composer_alias "$current_php_version"
+    fi
+
     log_success "Composer installed successfully"
 }
 
@@ -869,11 +874,14 @@ switch_php_version() {
     # Update PATH for PHP CLI and Composer
     update_php_path "$php_version"
 
+    # Update Composer alias to use correct PHP version
+    update_composer_alias "$php_version"
+
     # Check if aliases already exist before creating them
     local shell_profile=""
     case "$SHELL" in
-        */zsh) shell_profile="$HOME/.zshrc" ;;
-        */bash) shell_profile="$HOME/.bash_profile" ;;
+    */zsh) shell_profile="$HOME/.zshrc" ;;
+    */bash) shell_profile="$HOME/.bash_profile" ;;
     esac
 
     if [[ -n "$shell_profile" ]] && [[ -f "$shell_profile" ]]; then
@@ -889,6 +897,53 @@ switch_php_version() {
     log_info "PHP CLI and Composer now use PHP ${php_version}"
 }
 
+update_composer_alias() {
+    local php_version="$1"
+    local php_bin_path="${BREW_PREFIX}/opt/php@${php_version}/bin/php"
+    local composer_path="${BREW_PREFIX}/bin/composer"
+
+    # Update shell profile based on detected shell
+    local shell_profile=""
+    case "$SHELL" in
+    */zsh)
+        shell_profile="$HOME/.zshrc"
+        ;;
+    */bash)
+        shell_profile="$HOME/.bash_profile"
+        ;;
+    *)
+        log_warning "Unknown shell: $SHELL"
+        return 1
+        ;;
+    esac
+
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "Would update Composer alias to use PHP ${php_version}"
+        return 0
+    fi
+
+    log_info "Updating Composer alias to use PHP ${php_version}..."
+
+    # Remove ALL existing composer aliases (MAMP, BAMP, or any other)
+    if [[ -f "$shell_profile" ]]; then
+        # Create backup
+        cp "$shell_profile" "${shell_profile}.bamp.backup"
+
+        # Remove any existing composer alias lines
+        grep -v "^alias composer=" "$shell_profile" >"${shell_profile}.tmp"
+        mv "${shell_profile}.tmp" "$shell_profile"
+    fi
+
+    # Add new composer alias pointing to current PHP version
+    cat >>"$shell_profile" <<EOF
+
+# BAMP Composer Alias - Managed by BAMP script
+alias composer='${php_bin_path} ${composer_path}'  # BAMP Composer Alias
+EOF
+
+    log_success "Composer alias updated to use PHP ${php_version}"
+}
+
 update_php_path() {
     local php_version="$1"
     local php_bin_path="${BREW_PREFIX}/opt/php@${php_version}/bin"
@@ -896,16 +951,16 @@ update_php_path() {
     # Update shell profile based on detected shell
     local shell_profile=""
     case "$SHELL" in
-        */zsh)
-            shell_profile="$HOME/.zshrc"
-            ;;
-        */bash)
-            shell_profile="$HOME/.bash_profile"
-            ;;
-        *)
-            log_warning "Unknown shell: $SHELL"
-            return 1
-            ;;
+    */zsh)
+        shell_profile="$HOME/.zshrc"
+        ;;
+    */bash)
+        shell_profile="$HOME/.bash_profile"
+        ;;
+    *)
+        log_warning "Unknown shell: $SHELL"
+        return 1
+        ;;
     esac
 
     # Remove existing PHP PATH entries
@@ -914,12 +969,12 @@ update_php_path() {
         cp "$shell_profile" "${shell_profile}.bamp.backup"
 
         # Remove old BAMP PHP PATH entries
-        grep -v "# BAMP PHP PATH" "$shell_profile" > "${shell_profile}.tmp"
+        grep -v "# BAMP PHP PATH" "$shell_profile" >"${shell_profile}.tmp"
         mv "${shell_profile}.tmp" "$shell_profile"
     fi
 
     # Add new PHP PATH
-    cat >> "$shell_profile" << EOF
+    cat >>"$shell_profile" <<EOF
 
 # BAMP PHP PATH - Managed by BAMP script
 export PATH="${php_bin_path}:\$PATH"  # BAMP PHP PATH
@@ -932,28 +987,28 @@ EOF
 create_php_aliases() {
     local shell_profile=""
     case "$SHELL" in
-        */zsh)
-            shell_profile="$HOME/.zshrc"
-            ;;
-        */bash)
-            shell_profile="$HOME/.bash_profile"
-            ;;
-        *)
-            log_warning "Unknown shell: $SHELL"
-            return 1
-            ;;
+    */zsh)
+        shell_profile="$HOME/.zshrc"
+        ;;
+    */bash)
+        shell_profile="$HOME/.bash_profile"
+        ;;
+    *)
+        log_warning "Unknown shell: $SHELL"
+        return 1
+        ;;
     esac
 
     log_info "Creating PHP version aliases..."
 
     # Remove existing BAMP aliases
     if [[ -f "$shell_profile" ]]; then
-        grep -v "# BAMP PHP Aliases" "$shell_profile" > "${shell_profile}.tmp"
+        grep -v "# BAMP PHP Aliases" "$shell_profile" >"${shell_profile}.tmp"
         mv "${shell_profile}.tmp" "$shell_profile"
     fi
 
     # Add new aliases
-    cat >> "$shell_profile" << 'EOF'
+    cat >>"$shell_profile" <<'EOF'
 
 # BAMP PHP Aliases - Managed by BAMP script
 alias php82='/opt/homebrew/opt/php@8.2/bin/php'          # BAMP PHP Aliases
