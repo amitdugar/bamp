@@ -981,7 +981,31 @@ export PATH="${php_bin_path}:\$PATH"  # BAMP PHP PATH
 EOF
 
     log_info "Updated $shell_profile to use PHP ${php_version}"
-    log_info "Run 'source $shell_profile' or restart your terminal to apply changes"
+}
+
+source_shell_profile() {
+    local shell_profile="$1"
+
+    if [[ -z "$shell_profile" ]] || [[ ! -f "$shell_profile" ]]; then
+        return 0
+    fi
+
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "Would source $shell_profile to apply changes"
+        return 0
+    fi
+
+    log_info "Applying shell configuration changes..."
+
+    # Try to source the profile in the current shell
+    if source "$shell_profile" 2>/dev/null; then
+        log_success "Shell configuration reloaded successfully"
+        return 0
+    else
+        log_warning "Could not reload shell configuration automatically"
+        log_info "Run 'source $shell_profile' manually to apply changes"
+        return 1
+    fi
 }
 
 create_php_aliases() {
@@ -1294,9 +1318,24 @@ main() {
         fi
     fi
 
+    # At the end of main() function
     if [[ "$DRY_RUN" == true ]]; then
         log_success "Dry run completed - no changes were made"
     else
+        # Source shell profile BEFORE showing completion message
+        # Determine shell profile
+        local shell_profile=""
+        case "$SHELL" in
+        */zsh) shell_profile="$HOME/.zshrc" ;;
+        */bash) shell_profile="$HOME/.bash_profile" ;;
+        esac
+
+        # Source once at the end to apply all changes
+        if [[ -n "$shell_profile" ]]; then
+            source_shell_profile "$shell_profile"
+        fi
+
+        # THEN show completion message
         show_completion_message
     fi
 }
