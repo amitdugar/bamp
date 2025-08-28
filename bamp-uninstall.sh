@@ -112,6 +112,9 @@ show_file_locations() {
     log_info "Configuration and data locations:"
     echo
 
+    # Safe default even with `set -u` (doesn't error if unset)
+    local folder_icon="${FOLDER-📁}"
+
     local locations=(
         "/etc/dnsmasq.d:DNS configuration"
         "/etc/resolver:DNS resolver configuration"
@@ -130,10 +133,11 @@ show_file_locations() {
         local desc="${location_info##*:}"
 
         if [[ -e "$path" ]]; then
-            echo "  ${FOLDER} $path ($desc)"
+            echo "  ${folder_icon} $path ($desc)"
         fi
     done
 }
+
 
 create_backup() {
     if [[ "$BACKUP_MODE" == false ]]; then
