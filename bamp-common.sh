@@ -339,6 +339,48 @@ restart_service() {
 ################################################################################
 # MYSQL FUNCTIONS
 ################################################################################
+# ---------- MySQL shim setup ----------
+detect_mysql_formula() {
+    # Prefer versioned formulas first; add more if you like
+    for f in mysql@8.4 mysql; do
+        if brew ls --versions "$f" >/dev/null 2>&1; then
+        echo "$f"
+        return 0
+        fi
+    done
+    echo ""   # none installed
+    return 1
+}
+
+ensure_mysql_shims() {
+    local formula; formula="$(detect_mysql_formula || true)"
+    if [[ -z "$formula" ]]; then
+        log_warning "No MySQL formula installed yet; skipping mysql shims"
+        return 0
+    fi
+
+    local opt_bin="${BREW_PREFIX}/opt/${formula}/bin"
+    if [[ ! -d "$opt_bin" ]]; then
+        log_warning "Expected MySQL bin dir not found: $opt_bin"
+        return 0
+    fi
+
+    # Ensure Brew bin is on PATH for shells and scripts
+    if [[ ":$PATH:" != *":${BREW_PREFIX}/bin:"* ]]; then
+        export PATH="${BREW_PREFIX}/bin:${PATH}"
+    fi
+
+    # Symlink core client tools to a stable location
+    local t
+    for t in mysql mysqldump mysqladmin mysqlshow mysqlbinlog; do
+        if [[ -x "${opt_bin}/${t}" ]]; then
+        ln -sfn "${opt_bin}/${t}" "${BREW_PREFIX}/bin/${t}"
+        log_debug "Linked ${BREW_PREFIX}/bin/${t} -> ${opt_bin}/${t}"
+        fi
+    done
+
+    log_success "MySQL client shims ready (formula: ${formula})"
+}
 
 get_mysql_cmd() {
     if [[ -f "/Users/$USER/.my.cnf" ]]; then
@@ -352,11 +394,15 @@ mysql_connection_test() {
     local timeout="${1:-5}"
 
     if [[ -f "/Users/$USER/.my.cnf" ]]; then
-        timeout "$timeout" mysql --defaults-extra-file="/Users/$USER/.my.cnf" -e "SELECT 1;" >/dev/null 2>&1
+        mysql --defaults-extra-file="/Users/$USER/.my.cnf" \
+            --connect-timeout="$timeout" \
+            -e "SELECT 1;" >/dev/null 2>&1
     else
-        timeout "$timeout" mysql -u root -e "SELECT 1;" >/dev/null 2>&1
+        mysql -u root --connect-timeout="$timeout" \
+            -e "SELECT 1;" >/dev/null 2>&1
     fi
 }
+
 
 database_exists() {
     local db_name="$1"

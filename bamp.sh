@@ -293,7 +293,8 @@ configure_apache() {
 
     # Set DirectoryIndex
     if grep -q "DirectoryIndex" "$HTTPD_CONF"; then
-        sed -i '' 's|DirectoryIndex .*|DirectoryIndex index.php index.html|' "$HTTPD_CONF"
+        sed -i.tmp 's|DirectoryIndex .*|DirectoryIndex index.php index.html|' "$HTTPD_CONF"
+        rm -f "${HTTPD_CONF}.tmp"
     else
         echo "DirectoryIndex index.php index.html" >>"$HTTPD_CONF"
     fi
@@ -320,6 +321,9 @@ install_mysql() {
             start_service mysql
             sleep 5
         fi
+
+        # Make sure CLI is stable even if installed earlier
+        ensure_mysql_shims
         return 0
     fi
 
@@ -333,25 +337,32 @@ install_mysql() {
         log_warning "Removing MySQL 9.x to install MySQL 8.4"
         stop_service mysql
         brew uninstall mysql --ignore-dependencies || true
-        sudo rm -rf /opt/homebrew/var/mysql || true
+        sudo rm -rf "${BREW_PREFIX}/var/mysql" || true
     fi
 
     log_info "Installing MySQL 8.4 (LTS version)..."
     brew install mysql@8.4
 
     # Prepare datadir
-    sudo rm -rf /opt/homebrew/var/mysql || true
-    create_dir_if_not_exists "/opt/homebrew/var/mysql"
+    sudo rm -rf "${BREW_PREFIX}/var/mysql" || true
+    create_dir_if_not_exists "${BREW_PREFIX}/var/mysql"
     user="$(whoami)"
-    sudo chown -R "${user}:staff" /opt/homebrew/var/mysql
+    sudo chown -R "${user}:staff" "${BREW_PREFIX}/var/mysql"
 
     # Initialize MySQL
     log_info "Initializing MySQL database..."
-    /opt/homebrew/opt/mysql@8.4/bin/mysqld \
+    local mysql_prefix
+    mysql_prefix="$(brew --prefix mysql@8.4 2>/dev/null || true)"
+    if [[ -z "$mysql_prefix" ]]; then
+        mysql_prefix="${BREW_PREFIX}/opt/mysql@8.4"
+    fi
+
+    "${mysql_prefix}/bin/mysqld" \
         --initialize-insecure \
         --user="$(whoami)" \
-        --basedir=/opt/homebrew/opt/mysql@8.4 \
-        --datadir=/opt/homebrew/var/mysql
+        --basedir="${mysql_prefix}" \
+        --datadir="${BREW_PREFIX}/var/mysql"
+
 
     # Start MySQL service
     start_service mysql
@@ -364,6 +375,9 @@ install_mysql() {
         log_error "MySQL started but connection failed"
         return 1
     fi
+
+    # Keep CLI stable
+    ensure_mysql_shims    
 
     # Do security setup
     configure_mysql_security
@@ -650,6 +664,9 @@ install_ssl_support() {
 }
 
 create_wildcard_certificate() {
+
+    command -v mkcert >/dev/null 2>&1 || { log_error "mkcert not found"; return 1; }
+
     local cert_path="$CERT_PATH"
 
     create_dir_if_not_exists "$cert_path"
@@ -666,21 +683,18 @@ create_wildcard_certificate() {
 
     log_info "Creating wildcard SSL certificate for *.test domains..."
 
-    local temp_dir=$(mktemp -d)
-    cd "$temp_dir"
-    mkcert "*.test" "test"
+    # Ask mkcert to write with explicit names so we don't guess its output filename
+    mkcert \
+        -cert-file "${cert_path}/_wildcard.test.pem" \
+        -key-file  "${cert_path}/_wildcard.test-key.pem" \
+        "*.test" "test"
 
-    sudo mv "*.test.pem" "${cert_path}/_wildcard.test.pem"
-    sudo mv "*.test-key.pem" "${cert_path}/_wildcard.test-key.pem"
-
-    sudo chmod 644 "${cert_path}/_wildcard.test.pem"
-    sudo chmod 600 "${cert_path}/_wildcard.test-key.pem"
-
-    cd - >/dev/null
-    rm -rf "$temp_dir"
+    chmod 644 "${cert_path}/_wildcard.test.pem"
+    chmod 600 "${cert_path}/_wildcard.test-key.pem"
 
     log_success "Wildcard SSL certificate created for *.test domains"
 }
+
 
 install_php() {
     local php_version="${1:-$DEFAULT_PHP}"
@@ -1032,16 +1046,17 @@ create_php_aliases() {
     fi
 
     # Add new aliases
-    cat >>"$shell_profile" <<'EOF'
+    cat >>"$shell_profile" <<EOF
 
 # BAMP PHP Aliases - Managed by BAMP script
-alias php82='/opt/homebrew/opt/php@8.2/bin/php'          # BAMP PHP Aliases
-alias php83='/opt/homebrew/opt/php@8.3/bin/php'          # BAMP PHP Aliases
-alias php84='/opt/homebrew/opt/php@8.4/bin/php'          # BAMP PHP Aliases
-alias composer82='/opt/homebrew/opt/php@8.2/bin/php /opt/homebrew/bin/composer'  # BAMP PHP Aliases
-alias composer83='/opt/homebrew/opt/php@8.3/bin/php /opt/homebrew/bin/composer'  # BAMP PHP Aliases
-alias composer84='/opt/homebrew/opt/php@8.4/bin/php /opt/homebrew/bin/composer'  # BAMP PHP Aliases
+alias php82='${BREW_PREFIX}/opt/php@8.2/bin/php'          # BAMP PHP Aliases
+alias php83='${BREW_PREFIX}/opt/php@8.3/bin/php'          # BAMP PHP Aliases
+alias php84='${BREW_PREFIX}/opt/php@8.4/bin/php'          # BAMP PHP Aliases
+alias composer82='${BREW_PREFIX}/opt/php@8.2/bin/php ${BREW_PREFIX}/bin/composer'  # BAMP PHP Aliases
+alias composer83='${BREW_PREFIX}/opt/php@8.3/bin/php ${BREW_PREFIX}/bin/composer'  # BAMP PHP Aliases
+alias composer84='${BREW_PREFIX}/opt/php@8.4/bin/php ${BREW_PREFIX}/bin/composer'  # BAMP PHP Aliases
 EOF
+
 
     log_success "PHP aliases created in $shell_profile"
     echo "Usage examples:"
@@ -1195,6 +1210,9 @@ main() {
     local restart_services=false
     local composer_check=false
     local create_aliases=false
+
+    # Make sure brew bin is first for scripts
+    export PATH="${BREW_PREFIX}/bin:${PATH}"    
 
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do

@@ -119,7 +119,7 @@ show_file_locations() {
         "${BREW_PREFIX}/etc/php:PHP configuration"
         "${BREW_PREFIX}/etc/my.cnf:MySQL configuration"
         "${BREW_PREFIX}/var/mysql:MySQL databases"
-        ${LOG_DIR}:Apache logs"
+        "${LOG_DIR}:Apache logs"
         "/Users/$USER/Sites:Web documents"
         "/Users/$USER/.mkcert:SSL certificates"
         "/Users/$USER/.my.cnf:MySQL user config"
