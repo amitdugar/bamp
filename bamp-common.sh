@@ -34,27 +34,34 @@ readonly KEY="🔑"
 readonly BEER="🍺"
 
 # Global configuration
-readonly BREW_PREFIX="$(brew --prefix 2>/dev/null || echo "/opt/homebrew")"
+
 readonly PHP_VERSIONS=("8.1" "8.2" "8.3" "8.4")
 readonly DEFAULT_PHP="8.2"
 
-# Paths
-readonly MYSQL_CONFIG="${BREW_PREFIX}/etc/my.cnf"
-readonly VHOSTS_DIR="${BREW_PREFIX}/etc/httpd/extra/vhosts.d"
-readonly CERT_PATH="${BREW_PREFIX}/etc/httpd/certs"
-readonly HTTPD_CONF="${BREW_PREFIX}/etc/httpd/httpd.conf"
-readonly LOG_DIR="${BREW_PREFIX}/var/log/httpd"
 
-# Default settings
-readonly DEFAULT_DOMAIN_SUFFIX="test"
-readonly HTTP_PORT="${BAMP_HTTP_PORT:-80}"
-readonly HTTPS_PORT="${BAMP_HTTPS_PORT:-443}"
-readonly MYSQL_PORT="${BAMP_MYSQL_PORT:-3306}"
 
 # Global flags
 VERBOSE=${VERBOSE:-false}
 DRY_RUN=${DRY_RUN:-false}
 FORCE_MODE=${FORCE_MODE:-false}
+
+
+# ---- BAMP shared defaults (single source of truth) ----
+: "${WEBROOT:=$HOME/www}"
+: "${BREW_PREFIX:=$(brew --prefix 2>/dev/null || echo /opt/homebrew)}"
+: "${HTTPD_CONF:=${BREW_PREFIX}/etc/httpd/httpd.conf}"
+: "${VHOSTS_DIR:=${BREW_PREFIX}/etc/httpd/extra/vhosts.d}"
+: "${CERT_PATH:=${BREW_PREFIX}/etc/httpd/certs}"
+: "${LOG_DIR:=${BREW_PREFIX}/var/log/httpd}"
+: "${HTTP_PORT:=${BAMP_HTTP_PORT:-80}}"
+: "${HTTPS_PORT:=${BAMP_HTTPS_PORT:-443}}"
+: "${MYSQL_PORT:=${BAMP_MYSQL_PORT:-3306}}"
+
+
+mkdir -p "$VHOSTS_DIR" "$CERT_PATH" "$LOG_DIR"
+
+
+
 
 ################################################################################
 # LOGGING FUNCTIONS
@@ -710,78 +717,110 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 fi
 
 
-ensure_default_localhost_vhost() {
-    # Creates / updates a default vhost for localhost so it becomes the fallback,
-    # preventing other project vhosts from hijacking unmatched hosts.
-    create_dir_if_not_exists "$VHOSTS_DIR"
+ensure_apache_https_prereqs() {
+  # Preconditions
+  if [[ ! -f "$HTTPD_CONF" ]]; then
+    log_error "Apache config not found at: $HTTPD_CONF"
+    return 1
+  fi
 
-    local conf="${VHOSTS_DIR}/000-localhost.conf"
-    local docroot="${WEBROOT:-$HOME/www}"
-
-    # Ensure default docroot exists (and a tiny index to prove it works)
-    create_dir_if_not_exists "$docroot"
-    if [[ ! -f "${docroot}/index.php" ]]; then
-        cat >"${docroot}/index.php" <<'EOF'
-<!doctype html><meta charset="utf-8"><title>Localhost</title>
-<h1>👋 Localhost default vhost</h1>
-<p>This is the default Apache vhost for unmatched hosts.</p>
-EOF
-    fi
-
-    # HTTPS block is optional: only include if a cert is available
-    local ssl_block=""
-    if [[ -f "${CERT_PATH}/_wildcard.test.pem" && -f "${CERT_PATH}/_wildcard.test-key.pem" ]]; then
-        ssl_block=$(cat <<EOF
-<VirtualHost *:${HTTPS_PORT}>
-    ServerName localhost
-    ServerAlias 127.0.0.1 localhost.localdomain
-    DocumentRoot "${docroot}"
-    DirectoryIndex index.php index.html
-
-    SSLEngine on
-    SSLCertificateFile "${CERT_PATH}/_wildcard.test.pem"
-    SSLCertificateKeyFile "${CERT_PATH}/_wildcard.test-key.pem"
-
-    <Directory "${docroot}">
-        AllowOverride All
-        Require all granted
-        Options Indexes FollowSymLinks
-    </Directory>
-
-    ErrorLog  "${LOG_DIR}/default-ssl-error.log"
-    CustomLog "${LOG_DIR}/default-ssl-access.log" common
-</VirtualHost>
-EOF
-)
-    fi
-
-    # Always create HTTP block
-    local http_block=$(cat <<EOF
-<VirtualHost *:${HTTP_PORT}>
-    ServerName localhost
-    ServerAlias 127.0.0.1 localhost.localdomain
-    DocumentRoot "${docroot}"
-    DirectoryIndex index.php index.html
-
-    <Directory "${docroot}">
-        AllowOverride All
-        Require all granted
-        Options Indexes FollowSymLinks
-    </Directory>
-
-    ErrorLog  "${LOG_DIR}/default-error.log"
-    CustomLog "${LOG_DIR}/default-access.log" common
-</VirtualHost>
-EOF
-)
-
-    # Write config if it doesn't exist (idempotent)
-    if [[ ! -f "$conf" ]]; then
-        echo "# Default localhost vhost (created by BAMP)"            | sudo tee "$conf" >/dev/null
-        echo "$http_block"                                           | sudo tee -a "$conf" >/dev/null
-        if [[ -n "$ssl_block" ]]; then echo "$ssl_block"             | sudo tee -a "$conf" >/dev/null; fi
-        log_success "Created default localhost vhost: $conf"
+  # 1) Ensure HTTPS Listen line exists (don’t duplicate)
+  if ! grep -Eq "^[[:space:]]*Listen[[:space:]]+${HTTPS_PORT}([[:space:]]|\$)" "$HTTPD_CONF"; then
+    if [[ "$DRY_RUN" == true ]]; then
+      log_info "Would add: Listen ${HTTPS_PORT}"
     else
-        log_info "Default localhost vhost already exists: $conf"
+      echo "Listen ${HTTPS_PORT}" >> "$HTTPD_CONF"
+      log_info "Added Listen ${HTTPS_PORT}"
     fi
+  fi
+
+  # 2) Enable required modules (uncomment if present, append if missing)
+  if [[ "$DRY_RUN" == true ]]; then
+    log_info "Would enable ssl_module and socache_shmcb_module"
+  else
+    # Uncomment typical lines if they’re present but commented
+    sed -i.bampbak \
+      -e 's|^[#][[:space:]]*LoadModule[[:space:]]\+ssl_module|LoadModule ssl_module|' \
+      -e 's|^[#][[:space:]]*LoadModule[[:space:]]\+socache_shmcb_module|LoadModule socache_shmcb_module|' \
+      "$HTTPD_CONF"
+
+    # If still missing entirely, append canonical module lines
+    grep -Eq '^[[:space:]]*LoadModule[[:space:]]+ssl_module' "$HTTPD_CONF" || \
+      echo 'LoadModule ssl_module lib/httpd/modules/mod_ssl.so' >> "$HTTPD_CONF"
+
+    grep -Eq '^[[:space:]]*LoadModule[[:space:]]+socache_shmcb_module' "$HTTPD_CONF" || \
+      echo 'LoadModule socache_shmcb_module lib/httpd/modules/mod_socache_shmcb.so' >> "$HTTPD_CONF"
+  fi
+
+  # 3) Ensure vhosts include
+  if ! grep -Fq "IncludeOptional ${VHOSTS_DIR}/*.conf" "$HTTPD_CONF"; then
+    if [[ "$DRY_RUN" == true ]]; then
+      log_info "Would add: IncludeOptional ${VHOSTS_DIR}/*.conf"
+    else
+      echo "IncludeOptional ${VHOSTS_DIR}/*.conf" >> "$HTTPD_CONF"
+      log_info "Enabled vhosts.d include"
+    fi
+  fi
+}
+
+
+
+ensure_default_localhost_vhost() {
+
+mkdir -p "$VHOSTS_DIR" "$CERT_PATH" "$LOG_DIR"
+
+  # Make sure vhosts.d is included
+  grep -Fq "IncludeOptional ${VHOSTS_DIR}/*.conf" "$HTTPD_CONF" || \
+    echo "IncludeOptional ${VHOSTS_DIR}/*.conf" >> "$HTTPD_CONF"
+
+  # Create an HTTPS cert for localhost if needed
+  local lc_pem="${CERT_PATH}/localhost.pem"
+  local lc_key="${CERT_PATH}/localhost-key.pem"
+  if [[ ! -f "$lc_pem" || ! -f "$lc_key" ]]; then
+    command -v mkcert >/dev/null 2>&1 && \
+      mkcert -cert-file "$lc_pem" -key-file "$lc_key" "localhost" 127.0.0.1 ::1
+    chmod 644 "$lc_pem" 2>/dev/null || true
+    chmod 600 "$lc_key" 2>/dev/null || true
+  fi
+
+  # Write 00-localhost.conf only once
+  local vhost_file="${VHOSTS_DIR}/00-localhost.conf"
+  [[ -f "$vhost_file" ]] && return 0
+
+  sudo tee "$vhost_file" >/dev/null <<EOF
+# Default localhost vhost (must be first)
+<VirtualHost *:${HTTP_PORT}>
+  ServerName localhost
+  ServerAlias localhost.localdomain
+  DocumentRoot "${WEBROOT}"
+  DirectoryIndex index.php index.html
+  ErrorLog  "${LOG_DIR:-${BREW_PREFIX}/var/log/httpd}/localhost-error.log"
+  CustomLog "${LOG_DIR:-${BREW_PREFIX}/var/log/httpd}/localhost-access.log" common
+
+  <Directory "${WEBROOT}">
+    Options Indexes FollowSymLinks
+    AllowOverride All
+    Require all granted
+  </Directory>
+</VirtualHost>
+
+<VirtualHost *:${HTTPS_PORT}>
+  ServerName localhost
+  ServerAlias localhost.localdomain
+  DocumentRoot "${WEBROOT}"
+  DirectoryIndex index.php index.html
+  ErrorLog  "${LOG_DIR:-${BREW_PREFIX}/var/log/httpd}/localhost-ssl-error.log"
+  CustomLog "${LOG_DIR:-${BREW_PREFIX}/var/log/httpd}/localhost-ssl-access.log" common
+
+  SSLEngine on
+  SSLCertificateFile "${lc_pem}"
+  SSLCertificateKeyFile "${lc_key}"
+
+  <Directory "${WEBROOT}">
+    Options Indexes FollowSymLinks
+    AllowOverride All
+    Require all granted
+  </Directory>
+</VirtualHost>
+EOF
 }

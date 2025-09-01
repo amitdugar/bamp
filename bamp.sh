@@ -442,33 +442,23 @@ configure_apache() {
         log_info "Apache config backed up"
     fi
 
-    # Change Listen port
+    # --- keep: base HTTP + server name + rewrite ---
+    # Change HTTP Listen port
     sed -i.tmp "s|^Listen .*|Listen ${HTTP_PORT}|" "$HTTPD_CONF"
-
-    # Enable HTTPS port
-    if ! grep -q "^Listen 443" "$HTTPD_CONF"; then
-        echo "Listen 443" >>"$HTTPD_CONF"
-        log_info "Enabled HTTPS port 443"
-    fi
 
     # Fix ServerName
     if grep -q "^#ServerName" "$HTTPD_CONF"; then
         sed -i.tmp "s|^#ServerName .*|ServerName localhost:${HTTP_PORT}|" "$HTTPD_CONF"
     fi
 
-    # Load required modules
+    # Enable mod_rewrite (leave this here)
     sed -i.tmp "s|^#LoadModule rewrite_module|LoadModule rewrite_module|" "$HTTPD_CONF"
-    sed -i.tmp "s|^#LoadModule ssl_module|LoadModule ssl_module|" "$HTTPD_CONF"
 
     rm -f "${HTTPD_CONF}.tmp"
+    
+    ensure_apache_https_prereqs
 
-    # Add vhosts include
-    if ! grep -q "IncludeOptional ${VHOSTS_DIR}/*.conf" "$HTTPD_CONF"; then
-        echo "IncludeOptional ${VHOSTS_DIR}/*.conf" >>"$HTTPD_CONF"
-        log_info "Enabled vhosts.d include"
-    fi
-
-    # Create vhosts directory
+    # Create vhosts directory (harmless if already exists)
     create_dir_if_not_exists "$VHOSTS_DIR"
 
     # Set DirectoryIndex
@@ -488,8 +478,8 @@ configure_apache() {
     fi
 
     log_success "Apache configuration validated"
-
 }
+
 
 install_mysql() {
     if brew_package_installed mysql; then
