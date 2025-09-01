@@ -174,7 +174,7 @@ bamp.sh 8.4
 bamp-vhost
 
 # Command-line mode
-bamp-vhost myapp /Users/yourname/web/myapp/public
+bamp-vhost myapp /Users/yourname/www/myapp/public
 ```
 
 **Results:**
@@ -303,7 +303,7 @@ bamp --restart         # Restart all services
 | Apache HTTPS | 443 | `https://localhost` |
 | MySQL | 3306 | `mysql -u root` |
 | phpMyAdmin | - | `http://localhost/phpmyadmin` |
-| Document Root | - | `/Users/yourname/web` |
+| Document Root | - | `/Users/yourname/www` |
 
 **Custom Port Configuration:**
 ```bash
@@ -641,7 +641,7 @@ mysql -e "SHOW ENGINE INNODB STATUS\G"
     └── php@8.4/
 
 /Users/yourname/
-├── web/                              # Document root
+├── www/                              # Document root
 │   ├── info.php                        # PHP info page
 │   └── myapp/                          # Your projects
 ├── .my.cnf                             # MySQL client configuration
@@ -815,7 +815,7 @@ mysql -e "SHOW PROCESSLIST;"
 
 # Monitor file changes
 brew install fswatch
-fswatch /Users/yourname/web/
+fswatch /Users/yourname/www/
 ```
 
 ### Database Optimization

@@ -123,7 +123,7 @@ show_file_locations() {
         "${BREW_PREFIX}/etc/my.cnf:MySQL configuration"
         "${BREW_PREFIX}/var/mysql:MySQL databases"
         "${LOG_DIR}:Apache logs"
-        "/Users/$USER/web:Web documents"
+        "/Users/$USER/www:Web documents"
         "/Users/$USER/.mkcert:SSL certificates"
         "/Users/$USER/.my.cnf:MySQL user config"
     )
@@ -383,7 +383,7 @@ show_completion_message() {
     echo
 
     echo "💡 What's left:"
-    echo "  • Your ~/web directory (untouched)"
+    echo "  • Your ~/www directory (untouched)"
     echo "  • Homebrew itself (still installed)"
     if [[ "$KEEP_DATA" == true ]]; then
         echo "  • MySQL data directory (preserved)"
