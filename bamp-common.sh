@@ -825,3 +825,22 @@ mkdir -p "$VHOSTS_DIR" "$CERT_PATH" "$LOG_DIR"
 </VirtualHost>
 EOF
 }
+
+
+ensure_apache_ssl_ready() {
+  # Ensure SSL modules are loaded
+  sudo sed -i.bampbak \
+    -e 's|^[#]*LoadModule[[:space:]]\+ssl_module|LoadModule ssl_module|' \
+    -e 's|^[#]*LoadModule[[:space:]]\+socache_shmcb_module|LoadModule socache_shmcb_module|' \
+    "$HTTPD_CONF"
+
+  # Ensure SSLSessionCache is present
+  grep -q "SSLSessionCache " "$HTTPD_CONF" || \
+    echo 'SSLSessionCache shmcb:/tmp/ssl_gcache_data(512000)' | sudo tee -a "$HTTPD_CONF" >/dev/null
+  grep -q "SSLSessionCacheTimeout " "$HTTPD_CONF" || \
+    echo 'SSLSessionCacheTimeout 300' | sudo tee -a "$HTTPD_CONF" >/dev/null
+
+  # Ensure ServerName is set
+  grep -q "^ServerName " "$HTTPD_CONF" || \
+    echo "ServerName localhost" | sudo tee -a "$HTTPD_CONF" >/dev/null
+}

@@ -1490,6 +1490,7 @@ main() {
     install_mysql
     install_dnsmasq
     install_ssl_support
+    ensure_apache_ssl_ready
     ensure_default_localhost_vhost
     install_php "$php_version"
     create_info_page
