@@ -8,8 +8,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 # Source the common functions from the same directory as this script
 source "${SCRIPT_DIR}/bamp-common"
 
+
+
+chmod o+x "$HOME"
+mkdir -p "$HOME/www"
+chmod -R o+rX "$HOME/www"
+
+
 # Script-specific configuration
 readonly SCRIPT_NAME="BAMP"
+
+: "${WEBROOT:=$HOME/www}"
 
 # Global variables
 TARGET_PHP=""
@@ -45,6 +54,177 @@ Examples:
     bamp --dry-run           # Preview installation steps
 
 EOF
+}
+
+ensure_webroot() {
+    # Create webroot and a basic index/info if missing
+    create_dir_if_not_exists "$WEBROOT"
+
+    # Minimal index to prove DocumentRoot switch worked (idempotent)
+    local index_file="${WEBROOT}/index.php"
+    if [[ ! -f "$index_file" ]]; then
+        cat >"$index_file" <<EOF
+<!doctype html><html><head><meta charset="utf-8"><title>BAMP</title></head>
+<body><h1>BAMP is live</h1><p>DocumentRoot: ${WEBROOT}</p></body></html>
+EOF
+    fi
+}
+
+configure_document_root() {
+    # Point Apache DocumentRoot and matching <Directory> to $WEBROOT
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "Would set Apache DocumentRoot to: $WEBROOT"
+        return 0
+    fi
+    if [[ ! -f "$HTTPD_CONF" ]]; then
+        log_error "Apache configuration not found at: $HTTPD_CONF"
+        return 1
+    fi
+
+    backup_file "$HTTPD_CONF"
+
+    # Normalize paths for sed
+    local escaped_webroot="${WEBROOT//\//\\/}"
+
+    # Update DocumentRoot
+    if grep -qE '^DocumentRoot ' "$HTTPD_CONF"; then
+        sed -i.tmp "s|^DocumentRoot \".*\"|DocumentRoot \"${escaped_webroot}\"|g" "$HTTPD_CONF"
+    else
+        # Insert if missing, near the top-level config
+        sed -i.tmp "1i DocumentRoot \"${escaped_webroot}\"" "$HTTPD_CONF"
+    fi
+
+    # Update the first <Directory "..."> that matches previous DocumentRoot OR create a dedicated one
+    # Strategy: if a <Directory "..."> exists for /opt/homebrew/var/www or /usr/local/var/www, retarget it
+    # if grep -qE '^<Directory "/(opt|usr)/local/?homebrew?/var/www">' "$HTTPD_CONF"; then
+    #     sed -i.tmp "s|^<Directory \"/\(opt\|usr\)\/local\/\?homebrew\?\/var\/www\">|<Directory \"${escaped_webroot}\">|g" "$HTTPD_CONF"
+    # fi
+    if ! grep -qE "^<Directory \"${escaped_webroot}\">" "$HTTPD_CONF"; then
+        cat >>"$HTTPD_CONF" <<EOF
+        # BAMP: primary webroot
+        <Directory "${WEBROOT}">
+            Options Indexes FollowSymLinks
+            AllowOverride All
+            Require all granted
+        </Directory>
+EOF
+    fi
+
+    # Ensure DirectoryIndex contains index.php
+    if grep -q "^DirectoryIndex" "$HTTPD_CONF"; then
+        sed -i.tmp 's|^DirectoryIndex .*|DirectoryIndex index.php index.html|g' "$HTTPD_CONF"
+    else
+        echo "DirectoryIndex index.php index.html" >>"$HTTPD_CONF"
+    fi
+
+    rm -f "${HTTPD_CONF}.tmp"
+
+    # Validate and restart Apache
+    if ! apache_config_test; then
+        log_error "Apache configuration test failed after DocumentRoot change"
+        return 1
+    fi
+    if ! restart_service httpd; then
+        log_error "Failed to restart Apache after DocumentRoot change"
+        return 1
+    fi
+
+    log_success "Apache DocumentRoot set to ${WEBROOT}"
+}
+
+generate_blowfish_secret() {
+    # 32 chars [a-zA-Z0-9] (phpMyAdmin requires a secret)
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32
+    else
+        # Portable fallback
+        LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32
+    fi
+}
+
+install_phpmyadmin() {
+    # Install phpMyAdmin into $WEBROOT/phpmyadmin using Composer (idempotent).
+    local pma_dir="${WEBROOT}/phpmyadmin"
+    local pma_config="${pma_dir}/config.inc.php"
+    local pma_sample="${pma_dir}/config.sample.inc.php"
+
+    if [[ -d "$pma_dir" ]]; then
+        log_info "phpMyAdmin already present at ${pma_dir}"
+        return 0
+    fi
+
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "Would install phpMyAdmin into ${pma_dir} via Composer"
+        return 0
+    fi
+
+    if ! command_exists composer; then
+        log_info "Composer not found; installing Composer first"
+        install_composer || {
+            log_error "Composer installation failed; cannot install phpMyAdmin"
+            return 1
+        }
+    fi
+
+    log_info "Installing phpMyAdmin (stable) into ${pma_dir} ..."
+    if ! composer create-project --no-dev --prefer-dist phpmyadmin/phpmyadmin "${pma_dir}"; then
+        log_error "composer create-project phpmyadmin/phpmyadmin failed"
+        return 1
+    fi
+
+    if [[ -f "$pma_sample" && ! -f "$pma_config" ]]; then
+        cp "$pma_sample" "$pma_config"
+        local secret
+        secret="$(generate_blowfish_secret)"
+        perl -0777 -pe "s/\\\$cfg\\['blowfish_secret'\\]\\s*=\\s*'';/\\\$cfg['blowfish_secret'] = '${secret}';/g" -i "$pma_config"
+        log_info "Configured phpMyAdmin blowfish secret"
+    fi
+
+    mkdir -p "${pma_dir}/tmp"
+    chmod 700 "${pma_dir}/tmp" || true
+
+    log_success "phpMyAdmin installed at ${pma_dir}"
+
+    local base="http://localhost"
+    [[ "${HTTP_PORT}" != "80" ]] && base="${base}:${HTTP_PORT}"
+    log_info "URL: ${base}/phpmyadmin"
+}
+
+
+configure_phpmyadmin_apache_alias() {
+    # Optional: only if you DID NOT install into $WEBROOT/phpmyadmin.
+    # If you keep phpMyAdmin elsewhere, expose it as /phpmyadmin.
+    local pma_path="$1"
+    [[ -z "$pma_path" ]] && return 0
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "Would create Apache Alias for /phpmyadmin -> ${pma_path}"
+        return 0
+    fi
+    backup_file "$HTTPD_CONF"
+
+    local escaped="${pma_path//\//\\/}"
+    if ! grep -qE "^\s*Alias\s+/phpmyadmin\s+\"${escaped}\"" "$HTTPD_CONF"; then
+        cat >>"$HTTPD_CONF" <<EOF
+
+# BAMP: phpMyAdmin Alias
+Alias /phpmyadmin "${pma_path}"
+<Directory "${pma_path}">
+    Options Indexes FollowSymLinks
+    AllowOverride All
+    Require all granted
+</Directory>
+EOF
+    fi
+
+    if ! apache_config_test; then
+        log_error "Apache configuration test failed after phpMyAdmin alias"
+        return 1
+    fi
+    restart_service httpd || {
+        log_error "Failed to restart Apache after phpMyAdmin alias"
+        return 1
+    }
+    log_success "phpMyAdmin Alias configured"
 }
 
 list_php_versions() {
@@ -307,9 +487,8 @@ configure_apache() {
         exit 1
     fi
 
-    # Restart Apache
-    restart_service httpd
-    log_success "Apache configured and restarted"
+    log_success "Apache configuration validated"
+
 }
 
 install_mysql() {
@@ -494,7 +673,7 @@ setup_no_password() {
 
 create_mysql_config_file() {
     local password="$1"
-    local mysql_config="/Users/$USER/.my.cnf"
+    local mysql_config="$HOME/.my.cnf"
 
     log_info "Creating MySQL config file for convenience"
 
@@ -1087,15 +1266,14 @@ check_composer_php_version() {
 }
 
 create_info_page() {
-    local webroot="/Users/$USER/www"
-    local info_file="${webroot}/info.php"
+    local info_file="${WEBROOT}/info.php"
 
     if [[ "$DRY_RUN" == true ]]; then
-        log_info "Would create PHP info page at: $webroot/info.php"
+        log_info "Would create PHP info page at: ${info_file}"
         return 0
     fi
 
-    create_dir_if_not_exists "$webroot"
+    create_dir_if_not_exists "$WEBROOT"
 
     if [[ ! -f "$info_file" ]]; then
         cat >"$info_file" <<'EOF'
@@ -1104,11 +1282,11 @@ echo "<h1>🚀 BAMP Development Environment</h1>";
 echo "<p><strong>BAMP</strong> = <strong>B</strong>rew + <strong>A</strong>pache + <strong>M</strong>ySQL + <strong>P</strong>HP</p>";
 echo "<h2>System Information</h2>";
 phpinfo();
-?>
 EOF
         log_success "Created PHP info page at: http://localhost:${HTTP_PORT}/info.php"
     fi
 }
+
 
 show_mysql_info() {
     echo
@@ -1117,9 +1295,9 @@ show_mysql_info() {
     if service_running mysql; then
         echo "  ${CHECKMARK} MySQL is running on port ${MYSQL_PORT}"
 
-        if [[ -f "/Users/$USER/.my.cnf" ]]; then
+        if [[ -f "$HOME/.my.cnf" ]]; then
             # Check if the password in .my.cnf is empty or not
-            if grep -q "password = $" "/Users/$USER/.my.cnf" || grep -q "password =$" "/Users/$USER/.my.cnf"; then
+            if grep -q "password = $" "$HOME/.my.cnf" || grep -q "password =$" "$HOME/.my.cnf"; then
                 echo "  🔓 Root password: None (auto-login via ~/.my.cnf)"
             else
                 echo "  ${LOCK} Root password: Set (auto-login via ~/.my.cnf)"
@@ -1163,7 +1341,7 @@ show_completion_message() {
         echo "  • phpMyAdmin: http://localhost:${HTTP_PORT}/phpmyadmin"
     fi
 
-    echo "  • Document Root: /Users/$USER/www"
+    echo "  • Document Root: ${WEBROOT}"
     echo "  • .test domains resolve to 127.0.0.1"
 
     show_mysql_info
@@ -1183,9 +1361,9 @@ show_completion_message() {
     echo "  • Secure MySQL: mysql_secure_installation (optional)"
 
     # Fix the MySQL password detection logic
-    if [[ -f "/Users/$USER/.my.cnf" ]]; then
+    if [[ -f "$HOME/.my.cnf" ]]; then
         # If .my.cnf exists, check what's in it
-        if grep -q "password = $" "/Users/$USER/.my.cnf" || grep -q "password =$" "/Users/$USER/.my.cnf"; then
+        if grep -q "password = $" "$HOME/.my.cnf" || grep -q "password =$" "$HOME/.my.cnf"; then
             # Empty password in .my.cnf
             echo
             log_warning "${LOCK} Security Reminder:"
@@ -1313,13 +1491,19 @@ main() {
 
     log_info "Installing BAMP with PHP ${php_version}"
 
+    # Prepare filesystem first (idempotent)
+    ensure_webroot
+
     # Install core services
     install_apache
+    configure_document_root
     install_mysql
     install_dnsmasq
     install_ssl_support
+    ensure_default_localhost_vhost
     install_php "$php_version"
     create_info_page
+    install_phpmyadmin
 
     # Final verification
     log_info "Verifying services..."

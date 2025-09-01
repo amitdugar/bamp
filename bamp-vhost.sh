@@ -115,6 +115,8 @@ validate_environment() {
 
     create_dir_if_not_exists "$CERT_PATH"
 
+    ensure_default_localhost_vhost
+
     return 0
 }
 
@@ -251,7 +253,6 @@ create_vhost_config() {
     local domain="${project_name}.${domain_suffix}"
     local vhost_file="${VHOSTS_DIR}/${domain}.conf"
 
-    # Skip if it already exists
     if vhost_exists "$domain"; then
         log_error "Virtual host for '${domain}' already exists"
         log_info "Use --remove option to delete it first"
@@ -265,26 +266,38 @@ create_vhost_config() {
 
     log_info "Creating virtual host for ${domain}..."
 
-    # Determine SSL certificate to use
+    # Choose certs (wildcard for .test if present)
     local ssl_cert="${CERT_PATH}/${domain}.pem"
     local ssl_key="${CERT_PATH}/${domain}-key.pem"
-
     if [[ "$domain" == *.test ]] && [[ -f "${CERT_PATH}/_wildcard.test.pem" ]]; then
         ssl_cert="${CERT_PATH}/_wildcard.test.pem"
         ssl_key="${CERT_PATH}/_wildcard.test-key.pem"
         log_info "Using wildcard SSL certificate for *.test"
     fi
 
-    # Compose virtual host configuration
+    # Build config with conditional redirect (only for this domain)
     local vhost_config="
 # Virtual Host for ${domain}
 <VirtualHost *:${HTTP_PORT}>
     ServerName ${domain}
-    Redirect permanent / https://${domain}/
+    ServerAlias www.${domain}
+
+    # Only redirect to HTTPS when Host matches this domain
+    <IfModule mod_rewrite.c>
+        RewriteEngine On
+        RewriteCond %{HTTPS} !=on
+        RewriteCond %{HTTP_HOST} ^(${domain}|www\.${domain})$ [NC]
+        RewriteRule ^/(.*)$ https://%{HTTP_HOST}/\$1 [R=301,L]
+    </IfModule>
+
+    # If someone hits this vhost by IP/unknown host, DO NOT redirect; serve a tiny page
+    DocumentRoot \"${public_path}\"
+    DirectoryIndex index.php index.html
 </VirtualHost>
 
 <VirtualHost *:${HTTPS_PORT}>
     ServerName ${domain}
+    ServerAlias www.${domain}
     DocumentRoot \"${public_path}\"
     DirectoryIndex index.php index.html
     ErrorLog \"${LOG_DIR}/${project_name}-error.log\"
@@ -302,11 +315,10 @@ create_vhost_config() {
 </VirtualHost>
 "
 
-    # Write to vhost file
     echo "$vhost_config" | sudo tee "$vhost_file" >/dev/null
-
     log_success "Virtual host configuration saved: $vhost_file"
 }
+
 
 restart_apache() {
     if [[ "$DRY_RUN" == true ]]; then

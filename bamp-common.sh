@@ -708,3 +708,80 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo
     show_common_functions
 fi
+
+
+ensure_default_localhost_vhost() {
+    # Creates / updates a default vhost for localhost so it becomes the fallback,
+    # preventing other project vhosts from hijacking unmatched hosts.
+    create_dir_if_not_exists "$VHOSTS_DIR"
+
+    local conf="${VHOSTS_DIR}/000-localhost.conf"
+    local docroot="${WEBROOT:-$HOME/www}"
+
+    # Ensure default docroot exists (and a tiny index to prove it works)
+    create_dir_if_not_exists "$docroot"
+    if [[ ! -f "${docroot}/index.php" ]]; then
+        cat >"${docroot}/index.php" <<'EOF'
+<!doctype html><meta charset="utf-8"><title>Localhost</title>
+<h1>👋 Localhost default vhost</h1>
+<p>This is the default Apache vhost for unmatched hosts.</p>
+EOF
+    fi
+
+    # HTTPS block is optional: only include if a cert is available
+    local ssl_block=""
+    if [[ -f "${CERT_PATH}/_wildcard.test.pem" && -f "${CERT_PATH}/_wildcard.test-key.pem" ]]; then
+        ssl_block=$(cat <<EOF
+<VirtualHost *:${HTTPS_PORT}>
+    ServerName localhost
+    ServerAlias 127.0.0.1 localhost.localdomain
+    DocumentRoot "${docroot}"
+    DirectoryIndex index.php index.html
+
+    SSLEngine on
+    SSLCertificateFile "${CERT_PATH}/_wildcard.test.pem"
+    SSLCertificateKeyFile "${CERT_PATH}/_wildcard.test-key.pem"
+
+    <Directory "${docroot}">
+        AllowOverride All
+        Require all granted
+        Options Indexes FollowSymLinks
+    </Directory>
+
+    ErrorLog  "${LOG_DIR}/default-ssl-error.log"
+    CustomLog "${LOG_DIR}/default-ssl-access.log" common
+</VirtualHost>
+EOF
+)
+    fi
+
+    # Always create HTTP block
+    local http_block=$(cat <<EOF
+<VirtualHost *:${HTTP_PORT}>
+    ServerName localhost
+    ServerAlias 127.0.0.1 localhost.localdomain
+    DocumentRoot "${docroot}"
+    DirectoryIndex index.php index.html
+
+    <Directory "${docroot}">
+        AllowOverride All
+        Require all granted
+        Options Indexes FollowSymLinks
+    </Directory>
+
+    ErrorLog  "${LOG_DIR}/default-error.log"
+    CustomLog "${LOG_DIR}/default-access.log" common
+</VirtualHost>
+EOF
+)
+
+    # Write config if it doesn't exist (idempotent)
+    if [[ ! -f "$conf" ]]; then
+        echo "# Default localhost vhost (created by BAMP)"            | sudo tee "$conf" >/dev/null
+        echo "$http_block"                                           | sudo tee -a "$conf" >/dev/null
+        if [[ -n "$ssl_block" ]]; then echo "$ssl_block"             | sudo tee -a "$conf" >/dev/null; fi
+        log_success "Created default localhost vhost: $conf"
+    else
+        log_info "Default localhost vhost already exists: $conf"
+    fi
+}
