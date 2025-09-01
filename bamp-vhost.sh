@@ -265,30 +265,59 @@ create_vhost_config() {
 
     local ssl_cert="${CERT_PATH}/${domain}.pem"
     local ssl_key="${CERT_PATH}/${domain}-key.pem"
+    local error_log="${LOG_DIR}/${project_name}-error.log"
+    local access_log="${LOG_DIR}/${project_name}-access.log"
 
-    local vhost_config="
-# Virtual Host for ${domain}
+    # Escape domain for regex - handle dots and special characters
+    local escaped_domain="${domain//./\\.}"
+
+    local vhost_config="# Virtual Host for ${domain}
 <VirtualHost *:${HTTP_PORT}>
     ServerName ${domain}
     ServerAlias www.${domain}
-    ...
+
+    # Only redirect to HTTPS when Host matches this domain
+    <IfModule mod_rewrite.c>
+        RewriteEngine On
+        RewriteCond %{HTTPS} !=on
+        RewriteCond %{HTTP_HOST} ^(${escaped_domain}|www\\.${escaped_domain})\$ [NC]
+        RewriteRule ^/(.*)\$ https://%{HTTP_HOST}/\$1 [R=301,L]
+    </IfModule>
+
+    # If someone hits this vhost by IP/unknown host, DO NOT redirect; serve a tiny page
+    DocumentRoot \"${public_path}\"
+    DirectoryIndex index.php index.html
 </VirtualHost>
 
 <VirtualHost *:${HTTPS_PORT}>
     ServerName ${domain}
     ServerAlias www.${domain}
     DocumentRoot \"${public_path}\"
-    ...
+    DirectoryIndex index.php index.html
+
+    ErrorLog \"${error_log}\"
+    CustomLog \"${access_log}\" common
+
     SSLEngine on
-    SSLCertificateFile \"${ssl_cert}\"
-    SSLCertificateKeyFile \"${ssl_key}\"
-    ...
+    # Serve ONLY the LEAF cert produced above:
+    SSLCertificateFile     \"${ssl_cert}\"
+    SSLCertificateKeyFile  \"${ssl_key}\"
+
+    <IfModule http2_module>
+        Protocols h2 http/1.1
+    </IfModule>
+
+    <Directory \"${public_path}\">
+        AllowOverride All
+        Require all granted
+        Options Indexes FollowSymLinks
+    </Directory>
 </VirtualHost>
 "
+
     echo "$vhost_config" | sudo tee "$vhost_file" >/dev/null
     log_success "Virtual host configuration saved: $vhost_file"
 }
-
 
 
 restart_apache() {
