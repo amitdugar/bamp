@@ -8,6 +8,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 # Source the common functions from the same directory as this script
 source "${SCRIPT_DIR}/bamp-common"
 
+: "${DEFAULT_DOMAIN_SUFFIX:=test}"
+
+
 # Configuration
 readonly SCRIPT_NAME="BAMP VHost"
 
@@ -25,7 +28,7 @@ OPTIONS:
     -h, --help          Show this help message
     -l, --list          List existing virtual hosts
     -r, --remove NAME   Remove a virtual host
-    -d, --domain SUFFIX Domain suffix (default: ${DEFAULT_DOMAIN_SUFFIX})
+    -d, --domain SUFFIX Domain suffix (default: ${DEFAULT_DOMAIN_SUFFIX:-test})
     --dry-run           Show what would be created without actually doing it
 
 ARGUMENTS:
@@ -62,7 +65,7 @@ list_vhosts() {
 
 remove_vhost() {
     local project_name="$1"
-    local domain="${project_name}.${DEFAULT_DOMAIN_SUFFIX}"
+    local domain="${project_name}.${DEFAULT_DOMAIN_SUFFIX:-test}"
     local vhost_file="${VHOSTS_DIR}/${domain}.conf"
 
     if ! vhost_exists "$domain"; then
@@ -373,7 +376,7 @@ show_success_message() {
 main() {
     local project_name=""
     local public_path=""
-    local domain_suffix="$DEFAULT_DOMAIN_SUFFIX"
+    local domain_suffix="${DEFAULT_DOMAIN_SUFFIX:-test}"
     local remove_mode=false
     local remove_target=""
 
