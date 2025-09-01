@@ -103,6 +103,8 @@ validate_environment() {
         return 1
     fi
 
+    
+
     # Ensure vhosts.d directory exists
     create_dir_if_not_exists "$VHOSTS_DIR"
 
@@ -115,6 +117,8 @@ validate_environment() {
             log_info "Would add IncludeOptional for vhosts.d/*.conf"
         fi
     fi
+    
+    ensure_apache_https_prereqs
 
     create_dir_if_not_exists "$CERT_PATH"
 
@@ -211,10 +215,12 @@ EOF
 
 create_ssl_certificate() {
     local domain="$1"
+    local cert="${CERT_PATH}/${domain}.pem"
+    local key="${CERT_PATH}/${domain}-key.pem"
 
-    # Check if we're using .test domain and wildcard cert exists
-    if [[ "$domain" == *.test ]] && [[ -f "${CERT_PATH}/_wildcard.test.pem" ]]; then
-        log_info "Using existing wildcard SSL certificate for ${domain}"
+    # Already exists?
+    if [[ -f "$cert" && -f "$key" ]]; then
+        log_info "Using existing SSL certificate for ${domain}"
         return 0
     fi
 
@@ -223,31 +229,19 @@ create_ssl_certificate() {
         return 0
     fi
 
-    # Otherwise create individual certificate
     log_info "Creating SSL certificate for ${domain}..."
 
-    # Create certificates directory
     create_dir_if_not_exists "$CERT_PATH"
 
-    # Generate certificate with mkcert
-    local temp_dir=$(mktemp -d)
+    # Generate certs with SAN = domain + www.domain
+    mkcert -cert-file "$cert" -key-file "$key" "$domain" "www.$domain"
 
-    cd "$temp_dir"
-    mkcert "$domain"
+    sudo chmod 644 "$cert"
+    sudo chmod 600 "$key"
 
-    # Move certificates to Apache certs directory
-    sudo mv "${domain}.pem" "${CERT_PATH}/${domain}.pem"
-    sudo mv "${domain}-key.pem" "${CERT_PATH}/${domain}-key.pem"
-
-    # Set proper permissions
-    sudo chmod 644 "${CERT_PATH}/${domain}.pem"
-    sudo chmod 600 "${CERT_PATH}/${domain}-key.pem"
-
-    cd - >/dev/null
-    rm -rf "$temp_dir"
-
-    log_success "SSL certificate created"
+    log_success "SSL certificate created for ${domain}"
 }
+
 
 create_vhost_config() {
     local project_name="$1"
@@ -269,58 +263,32 @@ create_vhost_config() {
 
     log_info "Creating virtual host for ${domain}..."
 
-    # Choose certs (wildcard for .test if present)
     local ssl_cert="${CERT_PATH}/${domain}.pem"
     local ssl_key="${CERT_PATH}/${domain}-key.pem"
-    if [[ "$domain" == *.test ]] && [[ -f "${CERT_PATH}/_wildcard.test.pem" ]]; then
-        ssl_cert="${CERT_PATH}/_wildcard.test.pem"
-        ssl_key="${CERT_PATH}/_wildcard.test-key.pem"
-        log_info "Using wildcard SSL certificate for *.test"
-    fi
 
-    # Build config with conditional redirect (only for this domain)
     local vhost_config="
 # Virtual Host for ${domain}
 <VirtualHost *:${HTTP_PORT}>
     ServerName ${domain}
     ServerAlias www.${domain}
-
-    # Only redirect to HTTPS when Host matches this domain
-    <IfModule mod_rewrite.c>
-        RewriteEngine On
-        RewriteCond %{HTTPS} !=on
-        RewriteCond %{HTTP_HOST} ^(${domain}|www\.${domain})$ [NC]
-        RewriteRule ^/(.*)$ https://%{HTTP_HOST}/\$1 [R=301,L]
-    </IfModule>
-
-    # If someone hits this vhost by IP/unknown host, DO NOT redirect; serve a tiny page
-    DocumentRoot \"${public_path}\"
-    DirectoryIndex index.php index.html
+    ...
 </VirtualHost>
 
 <VirtualHost *:${HTTPS_PORT}>
     ServerName ${domain}
     ServerAlias www.${domain}
     DocumentRoot \"${public_path}\"
-    DirectoryIndex index.php index.html
-    ErrorLog \"${LOG_DIR}/${project_name}-error.log\"
-    CustomLog \"${LOG_DIR}/${project_name}-access.log\" common
-
+    ...
     SSLEngine on
     SSLCertificateFile \"${ssl_cert}\"
     SSLCertificateKeyFile \"${ssl_key}\"
-
-    <Directory \"${public_path}\">
-        AllowOverride All
-        Require all granted
-        Options Indexes FollowSymLinks
-    </Directory>
+    ...
 </VirtualHost>
 "
-
     echo "$vhost_config" | sudo tee "$vhost_file" >/dev/null
     log_success "Virtual host configuration saved: $vhost_file"
 }
+
 
 
 restart_apache() {

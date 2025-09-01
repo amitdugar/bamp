@@ -475,11 +475,6 @@ ssl_cert_exists() {
     [[ -f "${CERT_PATH}/${domain}.pem" ]] && [[ -f "${CERT_PATH}/${domain}-key.pem" ]]
 }
 
-wildcard_cert_exists() {
-    local suffix="$1"
-    [[ -f "${CERT_PATH}/_wildcard.${suffix}.pem" ]] && [[ -f "${CERT_PATH}/_wildcard.${suffix}-key.pem" ]]
-}
-
 ################################################################################
 # PROGRESS AND UI FUNCTIONS
 ################################################################################
@@ -689,7 +684,7 @@ APACHE:
   apache_config_test, get_current_php_version, vhost_exists
 
 SSL:
-  ssl_cert_exists, wildcard_cert_exists
+  ssl_cert_exists
 
 UI:
   show_progress_bar, spinner, confirm_action

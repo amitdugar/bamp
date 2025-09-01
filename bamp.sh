@@ -828,42 +828,8 @@ install_ssl_support() {
     brew install mkcert nss
     mkcert -install
 
-    create_wildcard_certificate
     log_success "SSL support installed"
 }
-
-create_wildcard_certificate() {
-
-    command -v mkcert >/dev/null 2>&1 || { log_error "mkcert not found"; return 1; }
-
-    local cert_path="$CERT_PATH"
-
-    create_dir_if_not_exists "$cert_path"
-
-    if [[ -f "${cert_path}/_wildcard.test.pem" ]]; then
-        log_info "Wildcard SSL certificate for *.test already exists"
-        return 0
-    fi
-
-    if [[ "$DRY_RUN" == true ]]; then
-        log_info "Would create wildcard SSL certificate for *.test domains"
-        return 0
-    fi
-
-    log_info "Creating wildcard SSL certificate for *.test domains..."
-
-    # Ask mkcert to write with explicit names so we don't guess its output filename
-    mkcert \
-        -cert-file "${cert_path}/_wildcard.test.pem" \
-        -key-file  "${cert_path}/_wildcard.test-key.pem" \
-        "*.test" "test"
-
-    chmod 644 "${cert_path}/_wildcard.test.pem"
-    chmod 600 "${cert_path}/_wildcard.test-key.pem"
-
-    log_success "Wildcard SSL certificate created for *.test domains"
-}
-
 
 install_php() {
     local php_version="${1:-$DEFAULT_PHP}"
