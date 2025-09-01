@@ -174,7 +174,7 @@ bamp.sh 8.4
 bamp-vhost
 
 # Command-line mode
-bamp-vhost myapp /Users/yourname/Sites/myapp/public
+bamp-vhost myapp /Users/yourname/web/myapp/public
 ```
 
 **Results:**
@@ -303,7 +303,7 @@ bamp --restart         # Restart all services
 | Apache HTTPS | 443 | `https://localhost` |
 | MySQL | 3306 | `mysql -u root` |
 | phpMyAdmin | - | `http://localhost/phpmyadmin` |
-| Document Root | - | `/Users/yourname/Sites` |
+| Document Root | - | `/Users/yourname/web` |
 
 **Custom Port Configuration:**
 ```bash
@@ -641,7 +641,7 @@ mysql -e "SHOW ENGINE INNODB STATUS\G"
     └── php@8.4/
 
 /Users/yourname/
-├── Sites/                              # Document root
+├── web/                              # Document root
 │   ├── info.php                        # PHP info page
 │   └── myapp/                          # Your projects
 ├── .my.cnf                             # MySQL client configuration
@@ -815,7 +815,7 @@ mysql -e "SHOW PROCESSLIST;"
 
 # Monitor file changes
 brew install fswatch
-fswatch /Users/yourname/Sites/
+fswatch /Users/yourname/web/
 ```
 
 ### Database Optimization
@@ -872,7 +872,7 @@ find ~/backups/ -name "*.sql.gz" -mtime +30 -delete
 
 ### From Laravel Valet
 
-1. **List existing sites:**
+1. **List existing projects:**
    ```bash
    valet links
    ```
@@ -882,10 +882,10 @@ find ~/backups/ -name "*.sql.gz" -mtime +30 -delete
    ./bamp.sh
    ```
 
-3. **Recreate sites:**
+3. **Recreate projects:**
    ```bash
-   # For each site from valet links
-   ./bamp-vhost.sh sitename /path/to/site/public
+   # For each projects from valet links
+   ./bamp-vhost.sh sitename /path/to/project/public
    ```
 
 ### From Docker

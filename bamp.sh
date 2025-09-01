@@ -1087,15 +1087,15 @@ check_composer_php_version() {
 }
 
 create_info_page() {
-    local sites_dir="/Users/$USER/Sites"
-    local info_file="${sites_dir}/info.php"
+    local webroot="/Users/$USER/www"
+    local info_file="${webroot}/info.php"
 
     if [[ "$DRY_RUN" == true ]]; then
-        log_info "Would create PHP info page at: $sites_dir/info.php"
+        log_info "Would create PHP info page at: $webroot/info.php"
         return 0
     fi
 
-    create_dir_if_not_exists "$sites_dir"
+    create_dir_if_not_exists "$webroot"
 
     if [[ ! -f "$info_file" ]]; then
         cat >"$info_file" <<'EOF'
@@ -1163,7 +1163,7 @@ show_completion_message() {
         echo "  • phpMyAdmin: http://localhost:${HTTP_PORT}/phpmyadmin"
     fi
 
-    echo "  • Document Root: /Users/$USER/Sites"
+    echo "  • Document Root: /Users/$USER/www"
     echo "  • .test domains resolve to 127.0.0.1"
 
     show_mysql_info

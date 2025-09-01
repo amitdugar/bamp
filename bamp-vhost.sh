@@ -30,11 +30,11 @@ OPTIONS:
 
 ARGUMENTS:
     PROJECT_NAME        Name for the project (e.g., myapp)
-    PUBLIC_PATH         Full path to document root (e.g., /Users/user/Sites/myapp/public)
+    PUBLIC_PATH         Full path to document root (e.g., /Users/user/web/myapp/public)
 
 Examples:
     bamp-vhost                          # Interactive mode
-    bamp-vhost myapp /Users/me/Sites/myapp/public
+    bamp-vhost myapp /Users/me/web/myapp/public
     bamp-vhost --list                   # Show existing vhosts
     bamp-vhost --remove myapp           # Remove myapp.test vhost
     bamp-vhost -d local myapp /path     # Create myapp.local instead of myapp.test
@@ -120,7 +120,7 @@ validate_environment() {
 
 get_project_input() {
     local provided_project_name="$1"
-    local default_user_sites="/Users/$USER/Sites"
+    local default_webroot="/Users/$USER/web"
 
     local project_name="$provided_project_name"
 
@@ -141,7 +141,7 @@ get_project_input() {
     fi
 
     # Prepare options based on project name
-    local suggested_path="${default_user_sites}/${project_name}"
+    local suggested_path="${default_webroot}/${project_name}"
     local suggested_public="${suggested_path}/public"
 
     echo
