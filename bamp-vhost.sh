@@ -268,23 +268,32 @@ create_vhost_config() {
     local error_log="${LOG_DIR}/${project_name}-error.log"
     local access_log="${LOG_DIR}/${project_name}-access.log"
 
-    # Escape domain for regex - handle dots and special characters
+    # Escape dots for regex use
     local escaped_domain="${domain//./\\.}"
+
+    # If HTTPS is on a non-default port, include it in the redirect
+    local https_port_suffix=""
+    if [[ "${HTTPS_PORT}" != "443" ]]; then
+        https_port_suffix=":${HTTPS_PORT}"
+    fi
 
     local vhost_config="# Virtual Host for ${domain}
 <VirtualHost *:${HTTP_PORT}>
     ServerName ${domain}
     ServerAlias www.${domain}
 
-    # Only redirect to HTTPS when Host matches this domain
+    # Force HTTPS only for this host (and its www alias)
     <IfModule mod_rewrite.c>
         RewriteEngine On
+        # Not already HTTPS?
         RewriteCond %{HTTPS} !=on
-        RewriteCond %{HTTP_HOST} ^(${escaped_domain}|www\\.${escaped_domain})\$ [NC]
-        RewriteRule ^/(.*)\$ https://%{HTTP_HOST}/\$1 [R=301,L]
+        # Match host w/o port and capture hostname only (strip any :port)
+        RewriteCond %{HTTP_HOST} ^(${escaped_domain}|www\\.${escaped_domain})(?::\\d+)?$ [NC]
+        # Redirect to https://<captured-host>[optional-port]/<same-uri>
+        RewriteRule ^ https://%1${https_port_suffix}%{REQUEST_URI} [R=301,L]
     </IfModule>
 
-    # If someone hits this vhost by IP/unknown host, DO NOT redirect; serve a tiny page
+    # Serve a tiny site (no redirect) if someone hits by IP or a different Host
     DocumentRoot \"${public_path}\"
     DirectoryIndex index.php index.html
 </VirtualHost>
@@ -299,7 +308,6 @@ create_vhost_config() {
     CustomLog \"${access_log}\" common
 
     SSLEngine on
-    # Serve ONLY the LEAF cert produced above:
     SSLCertificateFile     \"${ssl_cert}\"
     SSLCertificateKeyFile  \"${ssl_key}\"
 
@@ -312,12 +320,18 @@ create_vhost_config() {
         Require all granted
         Options Indexes FollowSymLinks
     </Directory>
+
+    # Optional: enable HSTS only if your certs are trusted locally
+    # <IfModule mod_headers.c>
+    #     Header always set Strict-Transport-Security \"max-age=31536000\"
+    # </IfModule>
 </VirtualHost>
 "
 
     echo "$vhost_config" | sudo tee "$vhost_file" >/dev/null
     log_success "Virtual host configuration saved: $vhost_file"
 }
+
 
 
 restart_apache() {

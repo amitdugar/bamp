@@ -631,6 +631,7 @@ port = ${MYSQL_PORT}
 
 [mysql]
 database = mysql
+sql_mode = 
 
 [mysqldump]
 user = root
