@@ -123,9 +123,9 @@ show_file_locations() {
         "${BREW_PREFIX}/etc/my.cnf:MySQL configuration"
         "${BREW_PREFIX}/var/mysql:MySQL databases"
         "${LOG_DIR}:Apache logs"
-        "/Users/$USER/www:Web documents"
-        "/Users/$USER/.mkcert:SSL certificates"
-        "/Users/$USER/.my.cnf:MySQL user config"
+        "$HOME/www:Web documents"
+        "$HOME/.mkcert:SSL certificates"
+        "$HOME/.my.cnf:MySQL user config"
     )
 
     for location_info in "${locations[@]}"; do
@@ -145,7 +145,7 @@ create_backup() {
         return 0
     fi
 
-    local backup_dir="/Users/$USER/BAMP_Backup_$(date +%Y%m%d_%H%M%S)"
+    local backup_dir="$HOME/BAMP_Backup_$(date +%Y%m%d_%H%M%S)"
 
     if [[ "$DRY_RUN" == true ]]; then
         log_info "Would create backup in: $backup_dir"
@@ -161,7 +161,7 @@ create_backup() {
         "${BREW_PREFIX}/etc/php"
         "${BREW_PREFIX}/etc/my.cnf"
         "/etc/dnsmasq.d"
-        "/Users/$USER/.my.cnf"
+        "$HOME/.my.cnf"
     )
 
     for config_path in "${config_paths[@]}"; do
@@ -186,11 +186,9 @@ create_backup() {
             if [[ -n "$databases" ]]; then
                 create_dir_if_not_exists "${backup_dir}/mysql_databases"
                 while IFS= read -r db; do
-                    if [[ -n "$db" ]]; then
-                        $(get_mysql_cmd) -e "USE \`$db\`" 2>/dev/null && {
-                            mysqldump $(get_mysql_cmd | cut -d' ' -f2-) "$db" > "${backup_dir}/mysql_databases/${db}.sql" 2>/dev/null || true
-                            log_info "Backed up database: $db"
-                        }
+                    if [[ -n "$db" ]] && database_exists "$db"; then
+                        $(get_mysqldump_cmd) "$db" > "${backup_dir}/mysql_databases/${db}.sql" 2>/dev/null || true
+                        log_info "Backed up database: $db"
                     fi
                 done <<< "$databases"
             fi
@@ -340,12 +338,12 @@ remove_configuration_files() {
 
     # User-level configurations
     local user_configs=(
-        "/Users/$USER/.mkcert"
+        "$HOME/.mkcert"
     )
 
     if [[ "$KEEP_DATA" == false ]]; then
         user_configs+=(
-            "/Users/$USER/.my.cnf"
+            "$HOME/.my.cnf"
         )
     fi
 
@@ -366,7 +364,7 @@ show_completion_message() {
 
     if [[ "$BACKUP_MODE" == true ]]; then
         echo "📦 Your configurations and data have been backed up"
-        echo "   Check: /Users/$USER/BAMP_Backup_*"
+        echo "   Check: $HOME/BAMP_Backup_*"
         echo
     fi
 
@@ -429,13 +427,13 @@ dry_run_preview() {
         "${BREW_PREFIX}/etc/php"
         "${BREW_PREFIX}/etc/my.cnf"
         "${LOG_DIR}"
-        "/Users/$USER/.mkcert"
+        "$HOME/.mkcert"
     )
 
     if [[ "$KEEP_DATA" == false ]]; then
         all_paths+=(
             "${BREW_PREFIX}/var/mysql"
-            "/Users/$USER/.my.cnf"
+            "$HOME/.my.cnf"
         )
     fi
 

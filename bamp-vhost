@@ -18,9 +18,34 @@ readonly SCRIPT_NAME="BAMP VHost"
 FINAL_PROJECT_NAME=""
 FINAL_PUBLIC_PATH=""
 
+is_valid_project_or_domain() {
+    local name="$1"
+
+    if is_valid_project_name "$name"; then
+        return 0
+    fi
+
+    if [[ "$name" == *.* ]] && is_valid_domain "$name"; then
+        return 0
+    fi
+
+    return 1
+}
+
+determine_domain() {
+    local name="$1"
+    local suffix="$2"
+
+    if [[ "$name" == *.* ]]; then
+        echo "$name"
+    else
+        echo "${name}.${suffix}"
+    fi
+}
+
 show_usage() {
     cat <<EOF
-Usage: bamp-vhost [OPTIONS] [PROJECT_NAME] [PUBLIC_PATH]
+Usage: bamp-vhost [OPTIONS] [PROJECT_NAME|DOMAIN] [PUBLIC_PATH]
 
 Create Apache virtual hosts with SSL certificates for local development.
 
@@ -32,12 +57,13 @@ OPTIONS:
     --dry-run           Show what would be created without actually doing it
 
 ARGUMENTS:
-    PROJECT_NAME        Name for the project (e.g., myapp)
+    PROJECT_NAME|DOMAIN Name for the project (e.g., myapp) or full domain (e.g., api.example)
     PUBLIC_PATH         Full path to document root (e.g., /Users/user/www/myapp/public)
 
 Examples:
     bamp-vhost                          # Interactive mode
     bamp-vhost myapp /Users/me/www/myapp/public
+    bamp-vhost api.xyz /Users/me/www/api.xyz/public
     bamp-vhost --list                   # Show existing vhosts
     bamp-vhost --remove myapp           # Remove myapp.test vhost
     bamp-vhost -d local myapp /path     # Create myapp.local instead of myapp.test
@@ -65,7 +91,9 @@ list_vhosts() {
 
 remove_vhost() {
     local project_name="$1"
-    local domain="${project_name}.${DEFAULT_DOMAIN_SUFFIX:-test}"
+    local suffix="${2:-${DEFAULT_DOMAIN_SUFFIX:-test}}"
+    local domain
+    domain=$(determine_domain "$project_name" "$suffix")
     local vhost_file="${VHOSTS_DIR}/${domain}.conf"
 
     if ! vhost_exists "$domain"; then
@@ -83,7 +111,7 @@ remove_vhost() {
         return 0
     fi
 
-    sudo rm -f "$vhost_file"
+    remove_file_privileged "$vhost_file"
     log_success "Virtual host '${domain}' removed successfully"
     restart_apache
 }
@@ -103,24 +131,20 @@ validate_environment() {
         return 1
     fi
 
-    
-
-    # Ensure vhosts.d directory exists
-    create_dir_if_not_exists "$VHOSTS_DIR"
+    # Ensure vhosts.d, certs, and log directories exist
+    ensure_bamp_dirs
 
     # Check and include vhosts.d in httpd.conf
     if ! grep -Fq "IncludeOptional ${VHOSTS_DIR}/*.conf" "$HTTPD_CONF"; then
         if [[ "$DRY_RUN" != true ]]; then
-            echo "IncludeOptional ${VHOSTS_DIR}/*.conf" | sudo tee -a "$HTTPD_CONF" >/dev/null
+            echo "IncludeOptional ${VHOSTS_DIR}/*.conf" >>"$HTTPD_CONF"
             log_info "Added IncludeOptional for vhosts.d/*.conf"
         else
             log_info "Would add IncludeOptional for vhosts.d/*.conf"
         fi
     fi
-    
-    ensure_apache_https_prereqs
 
-    create_dir_if_not_exists "$CERT_PATH"
+    ensure_apache_https_prereqs
 
     ensure_default_localhost_vhost
 
@@ -129,20 +153,20 @@ validate_environment() {
 
 get_project_input() {
     local provided_project_name="$1"
-    local default_webroot="/Users/$USER/www"
+    local default_webroot="$HOME/www"
 
     local project_name="$provided_project_name"
 
     # Prompt for project name if not provided
     if [[ -z "$project_name" ]]; then
         while true; do
-            read -p "Enter project name (e.g., myapp): " project_name
+            read -p "Enter project/domain (e.g., myapp or api.xyz): " project_name
             if [[ -z "$project_name" ]]; then
                 log_error "Project name cannot be empty"
                 continue
             fi
-            if ! is_valid_project_name "$project_name"; then
-                log_error "Invalid project name. Use only letters, numbers, hyphens, and underscores"
+            if ! is_valid_project_or_domain "$project_name"; then
+                log_error "Invalid project/domain name. Use letters, numbers, hyphens, underscores, or dots for full domains"
                 continue
             fi
             break
@@ -236,8 +260,8 @@ create_ssl_certificate() {
     # Generate certs with SAN = domain + www.domain
     mkcert -cert-file "$cert" -key-file "$key" "$domain" "www.$domain"
 
-    sudo chmod 644 "$cert"
-    sudo chmod 600 "$key"
+    chmod 644 "$cert"
+    chmod 600 "$key"
 
     log_success "SSL certificate created for ${domain}"
 }
@@ -246,8 +270,7 @@ create_ssl_certificate() {
 create_vhost_config() {
     local project_name="$1"
     local public_path="$2"
-    local domain_suffix="$3"
-    local domain="${project_name}.${domain_suffix}"
+    local domain="$3"
     local vhost_file="${VHOSTS_DIR}/${domain}.conf"
 
     if vhost_exists "$domain"; then
@@ -328,7 +351,7 @@ create_vhost_config() {
 </VirtualHost>
 "
 
-    echo "$vhost_config" | sudo tee "$vhost_file" >/dev/null
+    echo "$vhost_config" | write_config_file "$vhost_file"
     log_success "Virtual host configuration saved: $vhost_file"
 }
 
@@ -354,8 +377,7 @@ restart_apache() {
 show_success_message() {
     local project_name="$1"
     local public_path="$2"
-    local domain_suffix="$3"
-    local domain="${project_name}.${domain_suffix}"
+    local domain="$3"
 
     echo
     log_success "${ROCKET} Virtual host created successfully!"
@@ -388,6 +410,7 @@ main() {
     local project_name=""
     local public_path=""
     local domain_suffix="${DEFAULT_DOMAIN_SUFFIX:-test}"
+    local domain_suffix_overridden=false
     local remove_mode=false
     local remove_target=""
 
@@ -421,6 +444,7 @@ main() {
                 exit 1
             fi
             domain_suffix="$2"
+            domain_suffix_overridden=true
             shift 2
             ;;
         --dry-run)
@@ -464,23 +488,23 @@ main() {
             log_warning "macOS resolver for .test domains not found!"
             log_info "Creating resolver config at /etc/resolver/test (requires sudo)"
             sudo mkdir -p /etc/resolver
-            echo -e "nameserver 127.0.0.1\nport 53535" | sudo tee /etc/resolver/test >/dev/null
-            log_success "Resolver configured for .test domains (using dnsmasq on port 53535)"
+            printf 'nameserver 127.0.0.1\nport %s\n' "$DNSMASQ_PORT" | sudo tee /etc/resolver/test >/dev/null
+            log_success "Resolver configured for .test domains (using dnsmasq on port ${DNSMASQ_PORT})"
         fi
     fi
 
     # Handle remove mode
     if [[ "$remove_mode" == true ]]; then
-        remove_vhost "$remove_target"
+        remove_vhost "$remove_target" "$domain_suffix"
         exit 0
     fi
 
     # Get project details (interactive or from args)
     if [[ -z "$project_name" ]] || [[ -z "$public_path" ]]; then
         # Validate project name first if provided
-        if [[ -n "$project_name" ]] && ! is_valid_project_name "$project_name"; then
-            log_error "Invalid project name: $project_name"
-            log_info "Use only letters, numbers, hyphens, and underscores"
+        if [[ -n "$project_name" ]] && ! is_valid_project_or_domain "$project_name"; then
+            log_error "Invalid project/domain name: $project_name"
+            log_info "Use only letters, numbers, hyphens, underscores, and dots for full domains"
             exit 1
         fi
 
@@ -491,13 +515,18 @@ main() {
     fi
 
     # Final validation of project name
-    if ! is_valid_project_name "$project_name"; then
-        log_error "Invalid project name: $project_name"
-        log_info "Use only letters, numbers, hyphens, and underscores"
+    if ! is_valid_project_or_domain "$project_name"; then
+        log_error "Invalid project/domain name: $project_name"
+        log_info "Use only letters, numbers, hyphens, underscores, and dots for full domains"
         exit 1
     fi
 
-    local domain="${project_name}.${domain_suffix}"
+    local domain
+    domain=$(determine_domain "$project_name" "$domain_suffix")
+
+    if [[ "$project_name" == *.* ]] && [[ "$domain_suffix_overridden" == true ]]; then
+        log_warning "Full domain provided; ignoring domain suffix option"
+    fi
 
     # Dry run mode
     if [[ "$DRY_RUN" == true ]]; then
@@ -531,9 +560,9 @@ main() {
     log_info "Creating virtual host for '${domain}'..."
 
     create_ssl_certificate "$domain"
-    create_vhost_config "$project_name" "$public_path" "$domain_suffix"
+    create_vhost_config "$project_name" "$public_path" "$domain"
     restart_apache
-    show_success_message "$project_name" "$public_path" "$domain_suffix"
+    show_success_message "$project_name" "$public_path" "$domain"
 }
 
 # Run main function with all arguments

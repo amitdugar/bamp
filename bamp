@@ -8,20 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 # Source the common functions from the same directory as this script
 source "${SCRIPT_DIR}/bamp-common"
 
-
-
-chmod o+x "$HOME"
-mkdir -p "$HOME/www"
-chmod -R o+rX "$HOME/www"
-
-
 # Script-specific configuration
 readonly SCRIPT_NAME="BAMP"
-
-: "${WEBROOT:=$HOME/www}"
-
-# Global variables
-TARGET_PHP=""
 
 show_usage() {
     cat <<EOF
@@ -33,7 +21,7 @@ OPTIONS:
     -h, --help          Show this help message
     -l, --list          List available PHP versions
     -s, --status        Show service status
-    -r, --restart       Restart all services
+    -r, --restart       Restart Apache and MySQL
     --stop              Stop all services
     --composer-check    Check Composer PHP version alignment
     --create-aliases    Create PHP version aliases for easy switching
@@ -50,7 +38,7 @@ Examples:
     bamp --status            # Show current service status
     bamp --composer-check    # Check Composer PHP version alignment
     bamp --create-aliases    # Create PHP version aliases
-    bamp --restart           # Restart all services
+    bamp --restart           # Restart Apache and MySQL
     bamp --dry-run           # Preview installation steps
 
 EOF
@@ -59,6 +47,15 @@ EOF
 ensure_webroot() {
     # Create webroot and a basic index/info if missing
     create_dir_if_not_exists "$WEBROOT"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "Would make ${WEBROOT} readable by Apache and add a default index.php"
+        return 0
+    fi
+
+    # Apache (running as _www) needs to traverse $HOME and read the webroot
+    chmod o+x "$HOME"
+    chmod -R o+rX "$WEBROOT"
 
     # Minimal index to prove DocumentRoot switch worked (idempotent)
     local index_file="${WEBROOT}/index.php"
@@ -83,30 +80,23 @@ configure_document_root() {
 
     backup_file "$HTTPD_CONF"
 
-    # Normalize paths for sed
-    local escaped_webroot="${WEBROOT//\//\\/}"
-
-    # Update DocumentRoot
+    # Update DocumentRoot (| delimiter, so no escaping of / needed)
     if grep -qE '^DocumentRoot ' "$HTTPD_CONF"; then
-        sed -i.tmp "s|^DocumentRoot \".*\"|DocumentRoot \"${escaped_webroot}\"|g" "$HTTPD_CONF"
+        sed -i.tmp "s|^DocumentRoot \".*\"|DocumentRoot \"${WEBROOT}\"|g" "$HTTPD_CONF"
     else
-        # Insert if missing, near the top-level config
-        sed -i.tmp "1i DocumentRoot \"${escaped_webroot}\"" "$HTTPD_CONF"
+        echo "DocumentRoot \"${WEBROOT}\"" >>"$HTTPD_CONF"
     fi
 
-    # Update the first <Directory "..."> that matches previous DocumentRoot OR create a dedicated one
-    # Strategy: if a <Directory "..."> exists for /opt/homebrew/var/www or /usr/local/var/www, retarget it
-    # if grep -qE '^<Directory "/(opt|usr)/local/?homebrew?/var/www">' "$HTTPD_CONF"; then
-    #     sed -i.tmp "s|^<Directory \"/\(opt\|usr\)\/local\/\?homebrew\?\/var\/www\">|<Directory \"${escaped_webroot}\">|g" "$HTTPD_CONF"
-    # fi
-    if ! grep -qE "^<Directory \"${escaped_webroot}\">" "$HTTPD_CONF"; then
+    # Add a <Directory> block for the webroot if one doesn't exist yet
+    if ! grep -qF "<Directory \"${WEBROOT}\">" "$HTTPD_CONF"; then
         cat >>"$HTTPD_CONF" <<EOF
-        # BAMP: primary webroot
-        <Directory "${WEBROOT}">
-            Options Indexes FollowSymLinks
-            AllowOverride All
-            Require all granted
-        </Directory>
+
+# BAMP: primary webroot
+<Directory "${WEBROOT}">
+    Options Indexes FollowSymLinks
+    AllowOverride All
+    Require all granted
+</Directory>
 EOF
     fi
 
@@ -350,14 +340,14 @@ show_status() {
     if ! service_running dnsmasq && brew_package_installed dnsmasq; then
         echo "  • Start dnsmasq: brew services start dnsmasq"
     fi
-    echo "  • Restart all: bamp --restart"
+    echo "  • Restart Apache/MySQL: bamp --restart"
 }
 
 restart_services() {
-    log_info "Restarting services..."
+    log_info "Restarting Apache and MySQL..."
 
     # Define services to restart
-    local services=("httpd" "mysql" "dnsmasq")
+    local services=("httpd" "mysql")
 
     for service in "${services[@]}"; do
         if brew_package_installed "$service"; then
@@ -404,7 +394,7 @@ stop_services() {
 
 uninstall_components() {
     log_error "Uninstall functionality moved to separate script"
-    log_info "Use: ./bamp-uninstall.sh"
+    log_info "Use: ./bamp-uninstall"
     exit 1
 }
 
@@ -481,6 +471,42 @@ configure_apache() {
 }
 
 
+ensure_mysql_config_defaults() {
+    local my_cnf="${BREW_PREFIX}/etc/my.cnf"
+    local config_dir
+    config_dir="$(dirname "$my_cnf")"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "Would ensure MySQL sql_mode is blank in ${my_cnf}"
+        return 0
+    fi
+
+    create_dir_if_not_exists "$config_dir"
+
+    if [[ ! -f "$my_cnf" ]]; then
+        cat >"$my_cnf" <<EOF
+[mysqld]
+sql_mode=
+EOF
+        log_success "Created MySQL config with blank sql_mode: $my_cnf"
+        return 0
+    fi
+
+    if ! grep -q '^\[mysqld\]' "$my_cnf"; then
+        printf "\n[mysqld]\n" >>"$my_cnf"
+    fi
+
+    if grep -Eq '^[[:space:]]*sql_mode[[:space:]]*=' "$my_cnf"; then
+        sed -E -i.tmp 's/^[[:space:]]*sql_mode[[:space:]]*=.*/sql_mode=/' "$my_cnf"
+    else
+        printf "sql_mode=\n" >>"$my_cnf"
+    fi
+
+    rm -f "${my_cnf}.tmp"
+    log_success "Ensured MySQL sql_mode is blank in ${my_cnf}"
+}
+
+
 install_mysql() {
     if brew_package_installed mysql; then
         log_info "MySQL already installed"
@@ -493,20 +519,13 @@ install_mysql() {
 
         # Make sure CLI is stable even if installed earlier
         ensure_mysql_shims
+        ensure_mysql_config_defaults
         return 0
     fi
 
     if [[ "$DRY_RUN" == true ]]; then
         log_info "Would install MySQL 8.4"
         return 0
-    fi
-
-    # Remove any MySQL 9.x if present
-    if brew_package_installed mysql && ! brew_package_installed mysql@8.4; then
-        log_warning "Removing MySQL 9.x to install MySQL 8.4"
-        stop_service mysql
-        brew uninstall mysql --ignore-dependencies || true
-        sudo rm -rf "${BREW_PREFIX}/var/mysql" || true
     fi
 
     log_info "Installing MySQL 8.4 (LTS version)..."
@@ -532,6 +551,7 @@ install_mysql() {
         --basedir="${mysql_prefix}" \
         --datadir="${BREW_PREFIX}/var/mysql"
 
+    ensure_mysql_config_defaults
 
     # Start MySQL service
     start_service mysql
@@ -688,8 +708,6 @@ EOF
 }
 
 install_dnsmasq() {
-    local DNSMASQ_PORT=53535
-
     if brew_package_installed dnsmasq; then
         log_info "dnsmasq already installed"
 
@@ -708,7 +726,7 @@ install_dnsmasq() {
         # Check if configuration exists and is correct
         local dnsmasq_conf="${BREW_PREFIX}/etc/dnsmasq.conf"
         if [[ ! -f "$dnsmasq_conf" ]] || ! grep -q "port=${DNSMASQ_PORT}" "$dnsmasq_conf" 2>/dev/null; then
-            configure_dnsmasq "$DNSMASQ_PORT"
+            configure_dnsmasq
         fi
 
         if ! service_running dnsmasq; then
@@ -748,9 +766,9 @@ install_dnsmasq() {
 
     log_success "dnsmasq installed and linked successfully"
 
-    configure_dnsmasq "$DNSMASQ_PORT"
+    configure_dnsmasq
 
-    log_info "Starting dnsmasq on port $DNSMASQ_PORT..."
+    log_info "Starting dnsmasq on port ${DNSMASQ_PORT}..."
     if start_service dnsmasq; then
         sleep 2
         if service_running dnsmasq; then
@@ -766,10 +784,15 @@ install_dnsmasq() {
 }
 
 configure_dnsmasq() {
-    local dnsmasq_port="$1"
     local dnsmasq_conf="${BREW_PREFIX}/etc/dnsmasq.conf"
 
-    log_info "Configuring dnsmasq for .test domains on port $dnsmasq_port..."
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "Would configure dnsmasq for .test domains on port ${DNSMASQ_PORT}"
+        log_info "Would create system resolver at /etc/resolver/test (requires sudo)"
+        return 0
+    fi
+
+    log_info "Configuring dnsmasq for .test domains on port ${DNSMASQ_PORT}..."
 
     if [[ -f "$dnsmasq_conf" ]]; then
         backup_file "$dnsmasq_conf"
@@ -778,7 +801,7 @@ configure_dnsmasq() {
     cat >"$dnsmasq_conf" <<EOF
 # BAMP dnsmasq configuration
 # Use custom port to avoid requiring sudo
-port=${dnsmasq_port}
+port=${DNSMASQ_PORT}
 
 # Resolve .test domains to localhost
 address=/.test/127.0.0.1
@@ -804,7 +827,7 @@ EOF
 
     if ! cat <<EOF | sudo tee /etc/resolver/test >/dev/null; then
 nameserver 127.0.0.1
-port ${dnsmasq_port}
+port ${DNSMASQ_PORT}
 EOF
         log_error "Failed to create system resolver configuration"
         return 1
@@ -829,6 +852,126 @@ install_ssl_support() {
     mkcert -install
 
     log_success "SSL support installed"
+}
+
+install_imagemagick() {
+    if brew_package_installed imagemagick; then
+        log_info "ImageMagick already installed"
+        return 0
+    fi
+
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "Would install ImageMagick (required for imagick extension)"
+        return 0
+    fi
+
+    log_info "Installing ImageMagick (dependency for imagick extension)..."
+    if ! brew install imagemagick; then
+        log_error "Failed to install ImageMagick"
+        return 1
+    fi
+
+    log_success "ImageMagick installed"
+}
+
+ensure_intl_extension() {
+    local php_version="$1"
+    local php_bin="${BREW_PREFIX}/opt/php@${php_version}/bin/php"
+    local php_ini="${BREW_PREFIX}/etc/php/${php_version}/php.ini"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "Would ensure php-intl is available for PHP ${php_version}"
+        return 0
+    fi
+
+    [[ -x "$php_bin" ]] || return 0
+
+    # If intl is already active (statically compiled or loaded elsewhere),
+    # make sure we didn't previously add a duplicate `extension=intl` line
+    # that dlopen-fails, and stop here.
+    if "$php_bin" -n -m 2>/dev/null | grep -qi '^intl$'; then
+        if [[ -f "$php_ini" ]] && grep -Eq '^[[:space:]]*extension[[:space:]]*=[[:space:]]*"?intl"?[[:space:]]*$' "$php_ini"; then
+            sed -E -i.tmp '/^[[:space:]]*extension[[:space:]]*=[[:space:]]*"?intl"?[[:space:]]*$/d' "$php_ini"
+            rm -f "${php_ini}.tmp"
+            log_info "Removed redundant extension=intl (intl is built into PHP ${php_version})"
+        else
+            log_info "php-intl already available for PHP ${php_version}"
+        fi
+        return 0
+    fi
+
+    # intl is not built in — enable the shared module if it isn't already.
+    [[ -f "$php_ini" ]] || return 0
+    if grep -Eq '^[[:space:]]*extension[[:space:]]*=[[:space:]]*"?intl"?[[:space:]]*$' "$php_ini"; then
+        log_info "php-intl extension already enabled for PHP ${php_version}"
+    elif grep -Eq '^[[:space:]]*;[[:space:]]*extension[[:space:]]*=[[:space:]]*"?intl"?[[:space:]]*$' "$php_ini"; then
+        sed -E -i.tmp 's/^[[:space:]]*;[[:space:]]*extension[[:space:]]*=[[:space:]]*"?intl"?[[:space:]]*$/extension=intl/' "$php_ini"
+        rm -f "${php_ini}.tmp"
+        log_info "Enabled php-intl extension for PHP ${php_version}"
+    else
+        printf "\nextension=intl\n" >>"$php_ini"
+        log_info "Enabled php-intl extension for PHP ${php_version}"
+    fi
+}
+
+ensure_imagick_extension() {
+    local php_version="$1"
+    local php_bin="${BREW_PREFIX}/opt/php@${php_version}/bin/php"
+    local pecl_bin="${BREW_PREFIX}/opt/php@${php_version}/bin/pecl"
+    local conf_d="${BREW_PREFIX}/etc/php/${php_version}/conf.d"
+    local ini_file="${conf_d}/ext-imagick.ini"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "Would ensure imagick extension is installed for PHP ${php_version}"
+        return 0
+    fi
+
+    if [[ ! -x "$php_bin" ]]; then
+        log_error "PHP ${php_version} binary not found at ${php_bin}"
+        return 1
+    fi
+
+    install_imagemagick
+
+    # Already active? Nothing to do — don't add a second `extension=` line
+    # (pecl may have enabled it directly in php.ini; a duplicate would warn).
+    if "$php_bin" -r "exit(extension_loaded('imagick') ? 0 : 1);" 2>/dev/null; then
+        log_info "imagick extension already enabled for PHP ${php_version}"
+        return 0
+    fi
+
+    if [[ ! -x "$pecl_bin" ]]; then
+        log_error "pecl not found for PHP ${php_version} at ${pecl_bin}"
+        return 1
+    fi
+
+    log_info "Installing imagick extension for PHP ${php_version}..."
+    # --force rebuilds against the current PHP's ABI even when pecl still has
+    # imagick registered from a different PHP version (the .so from another
+    # api-version dir won't load, and a plain `pecl install` aborts with
+    # "already installed").
+    if ! printf "\n" | "$pecl_bin" install --force imagick; then
+        log_error "Failed to install imagick extension for PHP ${php_version}"
+        return 1
+    fi
+
+    # pecl usually enables the extension in php.ini itself. Only add our own
+    # conf.d entry if imagick still isn't loading afterwards.
+    if "$php_bin" -r "exit(extension_loaded('imagick') ? 0 : 1);" 2>/dev/null; then
+        log_success "imagick extension installed and enabled for PHP ${php_version}"
+        return 0
+    fi
+
+    mkdir -p "$conf_d"
+    if [[ ! -f "$ini_file" ]]; then
+        echo 'extension="imagick.so"' >"$ini_file"
+    fi
+
+    if "$php_bin" -r "exit(extension_loaded('imagick') ? 0 : 1);" 2>/dev/null; then
+        log_success "imagick extension installed and enabled for PHP ${php_version}"
+    else
+        log_warning "imagick installation completed but extension not detected; check ${ini_file}"
+    fi
 }
 
 install_php() {
@@ -858,7 +1001,11 @@ install_php() {
     configure_php "$php_version"
     switch_php_version "$php_version"
 
-    log_success "PHP ${php_version} is now active in Apache"
+    ensure_imagick_extension "$php_version"
+
+    if [[ "$DRY_RUN" != true ]]; then
+        log_success "PHP ${php_version} is now active in Apache"
+    fi
 
     install_composer
     return 0
@@ -890,12 +1037,41 @@ configure_php() {
         sed -i.tmp "s/;date.timezone =/date.timezone = ${escaped_timezone}/" "$php_ini"
 
         # Increase limits for development
-        sed -i.tmp 's/upload_max_filesize = 2M/upload_max_filesize = 128M/' "$php_ini"
-        sed -i.tmp 's/post_max_size = 8M/post_max_size = 128M/' "$php_ini"
+        if grep -Eq '^[[:space:]]*upload_max_filesize' "$php_ini"; then
+            sed -E -i.tmp 's/^[[:space:]]*upload_max_filesize[[:space:]]*=.*/upload_max_filesize = 1024M/' "$php_ini"
+        else
+            printf "\nupload_max_filesize = 1024M\n" >>"$php_ini"
+        fi
+        if grep -Eq '^[[:space:]]*post_max_size' "$php_ini"; then
+            sed -E -i.tmp 's/^[[:space:]]*post_max_size[[:space:]]*=.*/post_max_size = 1024M/' "$php_ini"
+        else
+            printf "\npost_max_size = 1024M\n" >>"$php_ini"
+        fi
         sed -i.tmp 's/max_execution_time = 30/max_execution_time = 300/' "$php_ini"
         sed -i.tmp 's/memory_limit = 128M/memory_limit = 256M/' "$php_ini"
 
+        # Keep dev sessions alive for days (7 days)
+        local long_session_lifetime=$((60 * 60 * 24 * 7))
+        if grep -Eq '^[[:space:]]*session\.gc_maxlifetime' "$php_ini"; then
+            sed -E -i.tmp "s/^[[:space:]]*session\\.gc_maxlifetime[[:space:]]*=.*/session.gc_maxlifetime = ${long_session_lifetime}/" "$php_ini"
+        else
+            printf "\nsession.gc_maxlifetime = %s\n" "$long_session_lifetime" >>"$php_ini"
+        fi
+
+        if grep -Eq '^[[:space:]]*session\.cookie_lifetime' "$php_ini"; then
+            sed -E -i.tmp "s/^[[:space:]]*session\\.cookie_lifetime[[:space:]]*=.*/session.cookie_lifetime = ${long_session_lifetime}/" "$php_ini"
+        else
+            printf "\nsession.cookie_lifetime = %s\n" "$long_session_lifetime" >>"$php_ini"
+        fi
+
         rm -f "${php_ini}.tmp"
+
+        # Ensure php-intl is available for locale-heavy apps.
+        # Newer Homebrew php builds compile intl statically, so a bare
+        # `extension=intl` would try to dlopen a non-existent intl.so and
+        # spew a startup warning on every invocation. Only add the line when
+        # intl is genuinely missing at runtime.
+        ensure_intl_extension "$php_version"
 
         log_success "PHP ${php_version} configured successfully"
         log_info "PHP timezone set to: $system_timezone"
@@ -1079,7 +1255,7 @@ update_composer_alias() {
         cp "$shell_profile" "${shell_profile}.bamp.backup"
 
         # Remove any existing composer alias lines
-        grep -v "^alias composer=" "$shell_profile" >"${shell_profile}.tmp"
+        grep -v "^alias composer=" "$shell_profile" >"${shell_profile}.tmp" || true
         mv "${shell_profile}.tmp" "$shell_profile"
     fi
 
@@ -1118,7 +1294,7 @@ update_php_path() {
         cp "$shell_profile" "${shell_profile}.bamp.backup"
 
         # Remove old BAMP PHP PATH entries
-        grep -v "# BAMP PHP PATH" "$shell_profile" >"${shell_profile}.tmp"
+        grep -v "# BAMP PHP PATH" "$shell_profile" >"${shell_profile}.tmp" || true
         mv "${shell_profile}.tmp" "$shell_profile"
     fi
 
@@ -1176,21 +1352,21 @@ create_php_aliases() {
 
     # Remove existing BAMP aliases
     if [[ -f "$shell_profile" ]]; then
-        grep -v "# BAMP PHP Aliases" "$shell_profile" >"${shell_profile}.tmp"
+        grep -v "# BAMP PHP Aliases" "$shell_profile" >"${shell_profile}.tmp" || true
         mv "${shell_profile}.tmp" "$shell_profile"
     fi
 
-    # Add new aliases
-    cat >>"$shell_profile" <<EOF
-
-# BAMP PHP Aliases - Managed by BAMP script
-alias php82='${BREW_PREFIX}/opt/php@8.2/bin/php'          # BAMP PHP Aliases
-alias php83='${BREW_PREFIX}/opt/php@8.3/bin/php'          # BAMP PHP Aliases
-alias php84='${BREW_PREFIX}/opt/php@8.4/bin/php'          # BAMP PHP Aliases
-alias composer82='${BREW_PREFIX}/opt/php@8.2/bin/php ${BREW_PREFIX}/bin/composer'  # BAMP PHP Aliases
-alias composer83='${BREW_PREFIX}/opt/php@8.3/bin/php ${BREW_PREFIX}/bin/composer'  # BAMP PHP Aliases
-alias composer84='${BREW_PREFIX}/opt/php@8.4/bin/php ${BREW_PREFIX}/bin/composer'  # BAMP PHP Aliases
-EOF
+    # Add new aliases (one pair per version in PHP_VERSIONS)
+    {
+        echo ""
+        echo "# BAMP PHP Aliases - Managed by BAMP script"
+        local version short
+        for version in "${PHP_VERSIONS[@]}"; do
+            short="${version//./}"
+            echo "alias php${short}='${BREW_PREFIX}/opt/php@${version}/bin/php'          # BAMP PHP Aliases"
+            echo "alias composer${short}='${BREW_PREFIX}/opt/php@${version}/bin/php ${BREW_PREFIX}/bin/composer'  # BAMP PHP Aliases"
+        done
+    } >>"$shell_profile"
 
 
     log_success "PHP aliases created in $shell_profile"
@@ -1306,7 +1482,7 @@ show_completion_message() {
     echo "🔧 Management Commands:"
     echo "  • Check status: bamp --status"
     echo "  • Switch PHP: bamp 8.2"
-    echo "  • Restart services: bamp --restart"
+    echo "  • Restart Apache/MySQL: bamp --restart"
     echo "  • Check Composer: bamp --composer-check"
     echo "  • Create aliases: bamp --create-aliases"
     echo
@@ -1340,10 +1516,10 @@ show_completion_message() {
 
 main() {
     local php_version=""
-    local show_status=false
-    local restart_services=false
-    local composer_check=false
-    local create_aliases=false
+    local opt_status=false
+    local opt_restart=false
+    local opt_composer_check=false
+    local opt_create_aliases=false
 
     # Make sure brew bin is first for scripts
     export PATH="${BREW_PREFIX}/bin:${PATH}"    
@@ -1364,19 +1540,19 @@ main() {
             exit 0
             ;;
         -s | --status)
-            show_status=true
+            opt_status=true
             shift
             ;;
         -r | --restart)
-            restart_services=true
+            opt_restart=true
             shift
             ;;
         --composer-check)
-            composer_check=true
+            opt_composer_check=true
             shift
             ;;
         --create-aliases)
-            create_aliases=true
+            opt_create_aliases=true
             shift
             ;;
         --uninstall)
@@ -1405,30 +1581,30 @@ main() {
     done
 
     # Handle composer check
-    if [[ "$composer_check" == true ]]; then
+    if [[ "$opt_composer_check" == true ]]; then
         check_composer_php_version
         exit 0
     fi
 
     # Handle alias creation
-    if [[ "$create_aliases" == true ]]; then
+    if [[ "$opt_create_aliases" == true ]]; then
         create_php_aliases
         exit 0
     fi
 
     # Set default PHP version if none specified
-    if [[ -z "$php_version" && "$show_status" == false && "$restart_services" == false ]]; then
+    if [[ -z "$php_version" && "$opt_status" == false && "$opt_restart" == false ]]; then
         php_version="$DEFAULT_PHP"
     fi
 
     # Handle status display
-    if [[ "$show_status" == true ]]; then
+    if [[ "$opt_status" == true ]]; then
         show_status
         exit 0
     fi
 
     # Handle service restart
-    if [[ "$restart_services" == true ]]; then
+    if [[ "$opt_restart" == true ]]; then
         restart_services
         exit 0
     fi

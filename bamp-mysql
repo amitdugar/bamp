@@ -17,7 +17,7 @@ VERBOSE=false
 
 show_usage() {
     cat << 'EOF'
-Usage: ./bamp-mysql.sh [OPTIONS] COMMAND [ARGS]
+Usage: ./bamp-mysql [OPTIONS] COMMAND [ARGS]
 
 A comprehensive MySQL utility for BAMP development environments.
 
@@ -46,23 +46,23 @@ OPTIONS:
 
 EXAMPLES:
     # Import operations
-    ./bamp-mysql.sh import myapp backup.sql
-    ./bamp-mysql.sh import-gz staging production.sql.gz
+    ./bamp-mysql import myapp backup.sql
+    ./bamp-mysql import-gz staging production.sql.gz
 
     # Export operations
-    ./bamp-mysql.sh dump myapp
-    ./bamp-mysql.sh dump-gz myapp backup.sql.gz
-    ./bamp-mysql.sh dump-all ~/backups/
+    ./bamp-mysql dump myapp
+    ./bamp-mysql dump-gz myapp backup.sql.gz
+    ./bamp-mysql dump-all ~/backups/
 
     # Database management
-    ./bamp-mysql.sh list
-    ./bamp-mysql.sh create newproject
-    ./bamp-mysql.sh restart
-    ./bamp-mysql.sh reset-password
+    ./bamp-mysql list
+    ./bamp-mysql create newproject
+    ./bamp-mysql restart
+    ./bamp-mysql reset-password
 
     # Maintenance
-    ./bamp-mysql.sh optimize myapp
-    ./bamp-mysql.sh check myapp
+    ./bamp-mysql optimize myapp
+    ./bamp-mysql check myapp
 
 NOTES:
     • This script integrates with BAMP's MySQL 8.4 configuration
@@ -149,7 +149,7 @@ show_mysql_status() {
     fi
 
     # Client config
-    if [[ -f "/Users/$USER/.my.cnf" ]]; then
+    if [[ -f "$HOME/.my.cnf" ]]; then
         echo "  📄 Client Config: ~/.my.cnf exists"
     fi
 
@@ -186,7 +186,7 @@ list_databases() {
     if [[ -z "$databases" ]]; then
         echo "  📭 No user databases found"
         echo
-        echo "  💡 Create a new database with: ./bamp-mysql.sh create DATABASE_NAME"
+        echo "  💡 Create a new database with: ./bamp-mysql create DATABASE_NAME"
         return 0
     fi
 
@@ -317,13 +317,13 @@ import_sql_file() {
 
     if [[ "$is_compressed" == true ]]; then
         log_progress "Decompressing and importing..."
-        gunzip -c "$sql_file" | mysql "$db_name" || {
+        gunzip -c "$sql_file" | $(get_mysql_cmd) "$db_name" || {
             log_error "Failed to import compressed SQL file"
             return 1
         }
     else
         log_progress "Importing..."
-        mysql "$db_name" < "$sql_file" || {
+        $(get_mysql_cmd) "$db_name" < "$sql_file" || {
             log_error "Failed to import SQL file"
             return 1
         }
@@ -382,13 +382,13 @@ dump_database() {
 
     if [[ "$compress" == true ]]; then
         log_progress "Dumping and compressing..."
-        mysqldump $dump_options "$db_name" | gzip -"$compress_level" > "$output_file" || {
+        $(get_mysqldump_cmd) $dump_options "$db_name" | gzip -"$compress_level" > "$output_file" || {
             log_error "Failed to dump and compress database"
             return 1
         }
     else
         log_progress "Dumping..."
-        mysqldump $dump_options "$db_name" > "$output_file" || {
+        $(get_mysqldump_cmd) $dump_options "$db_name" > "$output_file" || {
             log_error "Failed to dump database"
             return 1
         }
@@ -442,7 +442,7 @@ dump_all_databases() {
 
     while IFS= read -r db_name; do
         if [[ -n "$db_name" ]]; then
-            ((current++))
+            current=$((current + 1))
             log_info "[$current/$db_count] Dumping $db_name..."
 
             local output_file="${output_dir}/${db_name}_$(date +%Y%m%d_%H%M%S).sql.gz"
@@ -476,7 +476,7 @@ restart_mysql() {
             return 0
         fi
         sleep 1
-        ((retries++))
+        retries=$((retries + 1))
     done
 
     log_error "MySQL started but connection failed after 10 seconds"
@@ -600,7 +600,7 @@ reset_to_no_password() {
 
 update_mycnf_password() {
     local password="$1"
-    local mycnf_file="/Users/$USER/.my.cnf"
+    local mycnf_file="$HOME/.my.cnf"
 
     if [[ "$DRY_RUN" == true ]]; then
         log_info "Would update ~/.my.cnf with new password"
@@ -678,7 +678,7 @@ optimize_database() {
 
     while IFS= read -r table_name; do
         if [[ -n "$table_name" ]]; then
-            ((current++))
+            current=$((current + 1))
             log_debug "[$current/$table_count] Optimizing table: $table_name"
 
             show_progress_bar $current $table_count 30 "Optimizing"
@@ -729,7 +729,7 @@ check_database() {
 
     while IFS= read -r table_name; do
         if [[ -n "$table_name" ]]; then
-            ((current++))
+            current=$((current + 1))
             log_debug "[$current/$table_count] Checking table: $table_name"
 
             show_progress_bar $current $table_count 30 "Checking"
@@ -786,6 +786,10 @@ main() {
                 shift
                 ;;
             --compress-level)
+                if [[ -z "${2:-}" ]] || ! [[ "$2" =~ ^[1-9]$ ]]; then
+                    log_error "--compress-level requires a number between 1 and 9"
+                    exit 1
+                fi
                 compress_level="$2"
                 shift 2
                 ;;

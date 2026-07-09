@@ -35,7 +35,7 @@ readonly BEER="🍺"
 
 # Global configuration
 
-readonly PHP_VERSIONS=("8.1" "8.2" "8.3" "8.4")
+readonly PHP_VERSIONS=("8.1" "8.2" "8.3" "8.4" "8.5")
 readonly DEFAULT_PHP="8.2"
 
 
@@ -56,10 +56,9 @@ FORCE_MODE=${FORCE_MODE:-false}
 : "${HTTP_PORT:=${BAMP_HTTP_PORT:-80}}"
 : "${HTTPS_PORT:=${BAMP_HTTPS_PORT:-443}}"
 : "${MYSQL_PORT:=${BAMP_MYSQL_PORT:-3306}}"
+: "${MYSQL_CONFIG:=${BREW_PREFIX}/etc/my.cnf}"
+: "${DNSMASQ_PORT:=53535}"
 : "${DEFAULT_DOMAIN_SUFFIX:=test}"
-
-
-mkdir -p "$VHOSTS_DIR" "$CERT_PATH" "$LOG_DIR"
 
 
 
@@ -169,6 +168,46 @@ backup_file() {
         log_debug "Backed up: $file -> $backup_file"
         echo "$backup_file"
     fi
+}
+
+ensure_bamp_dirs() {
+    # Create the shared Apache/SSL/log directories (dry-run aware)
+    create_dir_if_not_exists "$VHOSTS_DIR"
+    create_dir_if_not_exists "$CERT_PATH"
+    create_dir_if_not_exists "$LOG_DIR"
+}
+
+write_config_file() {
+    # Write stdin to a file, escalating to sudo only when the target
+    # (or its parent, for new files) is not writable by the current user.
+    local target="$1"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        cat >/dev/null
+        log_info "Would write: $target"
+        return 0
+    fi
+
+    if { [[ -e "$target" ]] && [[ ! -w "$target" ]]; } ||
+        { [[ ! -e "$target" ]] && [[ ! -w "$(dirname "$target")" ]]; }; then
+        sudo tee "$target" >/dev/null
+    else
+        cat >"$target"
+    fi
+}
+
+remove_file_privileged() {
+    # Remove a file, escalating to sudo only when needed (dry-run aware)
+    local target="$1"
+
+    [[ -e "$target" ]] || return 0
+
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "Would remove: $target"
+        return 0
+    fi
+
+    rm -f "$target" 2>/dev/null || sudo rm -f "$target"
 }
 
 get_file_size() {
@@ -378,6 +417,11 @@ ensure_mysql_shims() {
         export PATH="${BREW_PREFIX}/bin:${PATH}"
     fi
 
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "Would link MySQL client tools into ${BREW_PREFIX}/bin (formula: ${formula})"
+        return 0
+    fi
+
     # Symlink core client tools to a stable location
     local t
     for t in mysql mysqldump mysqladmin mysqlshow mysqlbinlog; do
@@ -391,18 +435,26 @@ ensure_mysql_shims() {
 }
 
 get_mysql_cmd() {
-    if [[ -f "/Users/$USER/.my.cnf" ]]; then
+    if [[ -f "$HOME/.my.cnf" ]]; then
         echo "mysql"
     else
         echo "mysql -u root"
     fi
 }
 
+get_mysqldump_cmd() {
+    if [[ -f "$HOME/.my.cnf" ]]; then
+        echo "mysqldump"
+    else
+        echo "mysqldump -u root"
+    fi
+}
+
 mysql_connection_test() {
     local timeout="${1:-5}"
 
-    if [[ -f "/Users/$USER/.my.cnf" ]]; then
-        mysql --defaults-extra-file="/Users/$USER/.my.cnf" \
+    if [[ -f "$HOME/.my.cnf" ]]; then
+        mysql --defaults-extra-file="$HOME/.my.cnf" \
             --connect-timeout="$timeout" \
             -e "SELECT 1;" >/dev/null 2>&1
     else
@@ -735,10 +787,11 @@ ensure_apache_https_prereqs() {
     log_info "Would enable ssl_module and socache_shmcb_module"
   else
     # Uncomment typical lines if they’re present but commented
-    sed -i.bampbak \
+    sed -i.tmp \
       -e 's|^[#][[:space:]]*LoadModule[[:space:]]\+ssl_module|LoadModule ssl_module|' \
       -e 's|^[#][[:space:]]*LoadModule[[:space:]]\+socache_shmcb_module|LoadModule socache_shmcb_module|' \
       "$HTTPD_CONF"
+    rm -f "${HTTPD_CONF}.tmp"
 
     # If still missing entirely, append canonical module lines
     grep -Eq '^[[:space:]]*LoadModule[[:space:]]+ssl_module' "$HTTPD_CONF" || \
@@ -763,27 +816,35 @@ ensure_apache_https_prereqs() {
 
 ensure_default_localhost_vhost() {
 
-mkdir -p "$VHOSTS_DIR" "$CERT_PATH" "$LOG_DIR"
+  ensure_bamp_dirs
 
   # Make sure vhosts.d is included
-  grep -Fq "IncludeOptional ${VHOSTS_DIR}/*.conf" "$HTTPD_CONF" || \
-    echo "IncludeOptional ${VHOSTS_DIR}/*.conf" >> "$HTTPD_CONF"
+  if ! grep -Fq "IncludeOptional ${VHOSTS_DIR}/*.conf" "$HTTPD_CONF"; then
+    if [[ "$DRY_RUN" == true ]]; then
+      log_info "Would add: IncludeOptional ${VHOSTS_DIR}/*.conf"
+    else
+      echo "IncludeOptional ${VHOSTS_DIR}/*.conf" >> "$HTTPD_CONF"
+    fi
+  fi
 
   # Create an HTTPS cert for localhost if needed
   local lc_pem="${CERT_PATH}/localhost.pem"
   local lc_key="${CERT_PATH}/localhost-key.pem"
   if [[ ! -f "$lc_pem" || ! -f "$lc_key" ]]; then
-    command -v mkcert >/dev/null 2>&1 && \
+    if [[ "$DRY_RUN" == true ]]; then
+      log_info "Would create SSL certificate for localhost"
+    elif command -v mkcert >/dev/null 2>&1; then
       mkcert -cert-file "$lc_pem" -key-file "$lc_key" "localhost" 127.0.0.1 ::1
-    chmod 644 "$lc_pem" 2>/dev/null || true
-    chmod 600 "$lc_key" 2>/dev/null || true
+      chmod 644 "$lc_pem" 2>/dev/null || true
+      chmod 600 "$lc_key" 2>/dev/null || true
+    fi
   fi
 
   # Write 00-localhost.conf only once
   local vhost_file="${VHOSTS_DIR}/00-localhost.conf"
   [[ -f "$vhost_file" ]] && return 0
 
-  sudo tee "$vhost_file" >/dev/null <<EOF
+  write_config_file "$vhost_file" <<EOF
 # Default localhost vhost (must be first)
 <VirtualHost *:${HTTP_PORT}>
   ServerName localhost
@@ -823,19 +884,30 @@ EOF
 
 
 ensure_apache_ssl_ready() {
+  if [[ ! -f "$HTTPD_CONF" ]]; then
+    log_error "Apache config not found at: $HTTPD_CONF"
+    return 1
+  fi
+
+  if [[ "$DRY_RUN" == true ]]; then
+    log_info "Would ensure SSL modules, session cache, and ServerName in ${HTTPD_CONF}"
+    return 0
+  fi
+
   # Ensure SSL modules are loaded
-  sudo sed -i.bampbak \
+  sed -i.tmp \
     -e 's|^[#]*LoadModule[[:space:]]\+ssl_module|LoadModule ssl_module|' \
     -e 's|^[#]*LoadModule[[:space:]]\+socache_shmcb_module|LoadModule socache_shmcb_module|' \
     "$HTTPD_CONF"
+  rm -f "${HTTPD_CONF}.tmp"
 
   # Ensure SSLSessionCache is present
   grep -q "SSLSessionCache " "$HTTPD_CONF" || \
-    echo 'SSLSessionCache shmcb:/tmp/ssl_gcache_data(512000)' | sudo tee -a "$HTTPD_CONF" >/dev/null
+    echo 'SSLSessionCache shmcb:/tmp/ssl_gcache_data(512000)' >> "$HTTPD_CONF"
   grep -q "SSLSessionCacheTimeout " "$HTTPD_CONF" || \
-    echo 'SSLSessionCacheTimeout 300' | sudo tee -a "$HTTPD_CONF" >/dev/null
+    echo 'SSLSessionCacheTimeout 300' >> "$HTTPD_CONF"
 
   # Ensure ServerName is set
   grep -q "^ServerName " "$HTTPD_CONF" || \
-    echo "ServerName localhost" | sudo tee -a "$HTTPD_CONF" >/dev/null
+    echo "ServerName localhost" >> "$HTTPD_CONF"
 }

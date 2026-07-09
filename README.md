@@ -37,7 +37,7 @@
 
 ```bash
 # Download and install globally
-curl -fsSL https://raw.githubusercontent.com/amitdugar/bamp/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/amitdugar/bamp/main/install | bash
 ```
 
 ```bash
@@ -58,13 +58,13 @@ bamp-uninstall              # Remove BAMP
 
 ```bash
 # Download individual scripts
-curl -O https://raw.githubusercontent.com/amitdugar/bamp/main/bamp.sh
-curl -O https://raw.githubusercontent.com/amitdugar/bamp/main/bamp-vhost.sh
-curl -O https://raw.githubusercontent.com/amitdugar/bamp/main/bamp-mysql.sh
-curl -O https://raw.githubusercontent.com/amitdugar/bamp/main/bamp-uninstall.sh
+curl -O https://raw.githubusercontent.com/amitdugar/bamp/main/bamp
+curl -O https://raw.githubusercontent.com/amitdugar/bamp/main/bamp-vhost
+curl -O https://raw.githubusercontent.com/amitdugar/bamp/main/bamp-mysql
+curl -O https://raw.githubusercontent.com/amitdugar/bamp/main/bamp-uninstall
 
 # Make executable and use
-chmod +x bamp*.sh
+chmod +x bamp*
 bamp 8.4
 ```
 
@@ -74,7 +74,7 @@ bamp 8.4
 # Clone for development/contribution
 git clone https://github.com/amitdugar/bamp.git
 cd bamp
-./install.sh              # Install globally
+./install              # Install globally
 # Or use directly: bamp 8.4
 ```
 
@@ -84,11 +84,11 @@ cd bamp
 # Add to your shell profile (~/.zshrc or ~/.bash_profile)
 export PATH="$HOME/path/to/bamp:$PATH"
 
-# Create symlinks without .sh extension
-ln -s $(pwd)/bamp.sh ~/bin/bamp
-ln -s $(pwd)/bamp-vhost.sh ~/bin/bamp-vhost
-ln -s $(pwd)/bamp-mysql.sh ~/bin/bamp-mysql
-ln -s $(pwd)/bamp-uninstall.sh ~/bin/bamp-uninstall
+# Create symlinks without  extension
+ln -s $(pwd)/bamp ~/bin/bamp
+ln -s $(pwd)/bamp-vhost ~/bin/bamp-vhost
+ln -s $(pwd)/bamp-mysql ~/bin/bamp-mysql
+ln -s $(pwd)/bamp-uninstall ~/bin/bamp-uninstall
 ```
 
 ---
@@ -98,7 +98,7 @@ To update to the latest version, simply re-run the installer:
 
 ```bash
 # Download and install globally
-curl -fsSL https://raw.githubusercontent.com/amitdugar/bamp/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/amitdugar/bamp/main/install | bash
 ```
 
 ## 🚀 Features
@@ -139,12 +139,12 @@ curl -fsSL https://raw.githubusercontent.com/amitdugar/bamp/main/install.sh | ba
 
 BAMP provides a complete suite of professional tools:
 
-| Script | Purpose | Key Features |
-|--------|---------|--------------|
-| `bamp.sh` | **Core Installation** | Install stack, switch PHP versions, service management |
-| `bamp-vhost.sh` | **Virtual Hosts** | Create SSL-enabled sites, domain management |
-| `bamp-mysql.sh` | **Database Operations** | Import/export, backups, maintenance, security |
-| `bamp-uninstall.sh` | **Safe Removal** | Complete cleanup with backup options |
+| Script           | Purpose                 | Key Features                                           |
+| ---------------- | ----------------------- | ------------------------------------------------------ |
+| `bamp`           | **Core Installation**   | Install stack, switch PHP versions, service management |
+| `bamp-vhost`     | **Virtual Hosts**       | Create SSL-enabled sites, domain management            |
+| `bamp-mysql`     | **Database Operations** | Import/export, backups, maintenance, security          |
+| `bamp-uninstall` | **Safe Removal**        | Complete cleanup with backup options                   |
 
 ---
 
@@ -153,7 +153,7 @@ BAMP provides a complete suite of professional tools:
 ### 1. Install BAMP Stack
 
 ```bash
-bamp.sh 8.4
+bamp 8.4
 ```
 
 **What this does:**
@@ -206,10 +206,10 @@ bamp-mysql dump-all ~/backups/
 bamp --status
 
 # List all virtual hosts
-./bamp-vhost.sh --list
+./bamp-vhost --list
 
 # MySQL status and configuration
-./bamp-mysql.sh status
+./bamp-mysql status
 
 # Switch PHP versions
 bamp 8.4
@@ -240,55 +240,55 @@ bamp --restart         # Restart all services
 
 ```bash
 # Create virtual hosts
-./bamp-vhost.sh                           # Interactive mode
-./bamp-vhost.sh myapp /path/to/public     # Command-line mode
-./bamp-vhost.sh -d local myapp /path      # Use .local domain
-./bamp-vhost.sh --dry-run myapp /path     # Preview only
+./bamp-vhost                           # Interactive mode
+./bamp-vhost myapp /path/to/public     # Command-line mode
+./bamp-vhost -d local myapp /path      # Use .local domain
+./bamp-vhost --dry-run myapp /path     # Preview only
 
 # Manage existing hosts
-./bamp-vhost.sh --list                    # List all virtual hosts
-./bamp-vhost.sh --remove myapp            # Remove virtual host
-./bamp-vhost.sh --help                    # Show all options
+./bamp-vhost --list                    # List all virtual hosts
+./bamp-vhost --remove myapp            # Remove virtual host
+./bamp-vhost --help                    # Show all options
 ```
 
 ### Database Operations
 
 ```bash
 # Import operations
-./bamp-mysql.sh import myapp backup.sql           # Import SQL file
-./bamp-mysql.sh import-gz staging prod.sql.gz    # Import compressed file
+./bamp-mysql import myapp backup.sql           # Import SQL file
+./bamp-mysql import-gz staging prod.sql.gz    # Import compressed file
 
 # Export operations
-./bamp-mysql.sh dump myapp                        # Export to timestamped file
-./bamp-mysql.sh dump-gz myapp backup.sql.gz      # Export with compression
-./bamp-mysql.sh dump-all ~/backups/              # Backup all databases
+./bamp-mysql dump myapp                        # Export to timestamped file
+./bamp-mysql dump-gz myapp backup.sql.gz      # Export with compression
+./bamp-mysql dump-all ~/backups/              # Backup all databases
 
 # Database management
-./bamp-mysql.sh list                              # List databases with sizes
-./bamp-mysql.sh create newproject                # Create database
-./bamp-mysql.sh drop oldproject                  # Drop database (with confirmation)
+./bamp-mysql list                              # List databases with sizes
+./bamp-mysql create newproject                # Create database
+./bamp-mysql drop oldproject                  # Drop database (with confirmation)
 
 # Service management
-./bamp-mysql.sh restart                           # Restart MySQL
-./bamp-mysql.sh reset-password                   # Reset root password
-./bamp-mysql.sh status                           # Show MySQL status
+./bamp-mysql restart                           # Restart MySQL
+./bamp-mysql reset-password                   # Reset root password
+./bamp-mysql status                           # Show MySQL status
 
 # Maintenance
-./bamp-mysql.sh optimize myapp                   # Optimize database tables
-./bamp-mysql.sh check myapp                      # Check and repair tables
+./bamp-mysql optimize myapp                   # Optimize database tables
+./bamp-mysql check myapp                      # Check and repair tables
 ```
 
 ### Safe Uninstallation
 
 ```bash
 # Safe removal with backups
-./bamp-uninstall.sh
+./bamp-uninstall
 
 # Advanced options
-./bamp-uninstall.sh --dry-run            # Preview what will be removed
-./bamp-uninstall.sh --keep-data          # Keep databases
-./bamp-uninstall.sh --no-backup          # Skip backups
-./bamp-uninstall.sh --force              # Skip confirmations
+./bamp-uninstall --dry-run            # Preview what will be removed
+./bamp-uninstall --keep-data          # Keep databases
+./bamp-uninstall --no-backup          # Skip backups
+./bamp-uninstall --force              # Skip confirmations
 ```
 
 ---
@@ -297,27 +297,27 @@ bamp --restart         # Restart all services
 
 ### Default Settings
 
-| Service | Port | Location |
-|---------|------|----------|
-| Apache HTTP | 80 | `http://localhost` |
-| Apache HTTPS | 443 | `https://localhost` |
-| MySQL | 3306 | `mysql -u root` |
-| phpMyAdmin | - | `http://localhost/phpmyadmin` |
-| Document Root | - | `/Users/yourname/www` |
+| Service       | Port | Location                      |
+| ------------- | ---- | ----------------------------- |
+| Apache HTTP   | 80   | `http://localhost`            |
+| Apache HTTPS  | 443  | `https://localhost`           |
+| MySQL         | 3306 | `mysql -u root`               |
+| phpMyAdmin    | -    | `http://localhost/phpmyadmin` |
+| Document Root | -    | `/Users/yourname/www`         |
 
 **Custom Port Configuration:**
 ```bash
 # Use custom ports if 80/443 are in use
-BAMP_HTTP_PORT=8080 BAMP_HTTPS_PORT=8443 ./bamp.sh
+BAMP_HTTP_PORT=8080 BAMP_HTTPS_PORT=8443 ./bamp
 
 # Or for virtual hosts
-BAMP_HTTP_PORT=8080 BAMP_HTTPS_PORT=8443 ./bamp-vhost.sh myapp /path
+BAMP_HTTP_PORT=8080 BAMP_HTTPS_PORT=8443 ./bamp-vhost myapp /path
 
 # Set for entire session
 export BAMP_HTTP_PORT=8080
 export BAMP_HTTPS_PORT=8443
 export BAMP_MYSQL_PORT=3306
-./bamp.sh
+./bamp
 ```
 
 **Why Standard Ports?**
@@ -374,10 +374,10 @@ query_cache_size = 64M
 sudo nano ${BREW_PREFIX}/etc/my.cnf
 
 # Apply changes
-./bamp-mysql.sh restart
+./bamp-mysql restart
 
 # Verify settings
-./bamp-mysql.sh status
+./bamp-mysql status
 ```
 
 ---
@@ -424,11 +424,11 @@ myapp.dev       # ✅ Individual SSL certificate
 
 ```bash
 # Use .local instead of .test
-./bamp-vhost.sh -d local myapp /path/to/public
+./bamp-vhost -d local myapp /path/to/public
 # Result: myapp.local
 
 # Use .dev domain
-./bamp-vhost.sh -d dev myapp /path/to/public
+./bamp-vhost -d dev myapp /path/to/public
 # Result: myapp.dev
 ```
 
@@ -436,15 +436,15 @@ myapp.dev       # ✅ Individual SSL certificate
 
 ```bash
 # Migrate from production
-./bamp-mysql.sh dump-gz production prod_backup.sql.gz
-./bamp-mysql.sh import-gz local_dev prod_backup.sql.gz
+./bamp-mysql dump-gz production prod_backup.sql.gz
+./bamp-mysql import-gz local_dev prod_backup.sql.gz
 
 # Daily backup routine
-./bamp-mysql.sh dump-all ~/daily_backups/$(date +%Y-%m-%d)/
+./bamp-mysql dump-all ~/daily_backups/$(date +%Y-%m-%d)/
 
 # Database maintenance
-./bamp-mysql.sh optimize myapp
-./bamp-mysql.sh check myapp
+./bamp-mysql optimize myapp
+./bamp-mysql check myapp
 ```
 
 ### Development Optimizations
@@ -471,7 +471,7 @@ Share your BAMP configuration with your team:
 cp ${BREW_PREFIX}/etc/httpd/extra/httpd-vhosts.conf team-vhosts.conf
 
 # Export database schemas
-./bamp-mysql.sh dump-all team-databases/
+./bamp-mysql dump-all team-databases/
 
 # Team members can import
 cp team-vhosts.conf ${BREW_PREFIX}/etc/httpd/extra/httpd-vhosts.conf
@@ -480,7 +480,7 @@ bamp --restart
 # Import databases
 for db in team-databases/*.sql.gz; do
     dbname=$(basename "$db" .sql.gz)
-    ./bamp-mysql.sh import-gz "$dbname" "$db"
+    ./bamp-mysql import-gz "$dbname" "$db"
 done
 ```
 
@@ -497,7 +497,7 @@ lsof -i :80
 lsof -i :443
 
 # Use custom ports if needed
-BAMP_HTTP_PORT=8080 BAMP_HTTPS_PORT=8443 ./bamp.sh
+BAMP_HTTP_PORT=8080 BAMP_HTTPS_PORT=8443 ./bamp
 
 # Or edit Apache config manually
 sudo nano ${BREW_PREFIX}/etc/httpd/httpd.conf
@@ -513,8 +513,8 @@ mkcert -install
 bamp  # Wildcard cert is recreated during installation
 
 # For individual domains
-./bamp-vhost.sh --remove myapp
-./bamp-vhost.sh myapp /path/to/public
+./bamp-vhost --remove myapp
+./bamp-vhost myapp /path/to/public
 ```
 
 **DNS not resolving:**
@@ -530,13 +530,13 @@ sudo dscacheutil -flushcache
 **MySQL connection issues:**
 ```bash
 # Check MySQL status
-./bamp-mysql.sh status
+./bamp-mysql status
 
 # Restart MySQL
-./bamp-mysql.sh restart
+./bamp-mysql restart
 
 # Reset password if needed
-./bamp-mysql.sh reset-password
+./bamp-mysql reset-password
 
 # Check configuration
 sudo nano ${BREW_PREFIX}/etc/my.cnf
@@ -545,16 +545,16 @@ sudo nano ${BREW_PREFIX}/etc/my.cnf
 **Database import/export issues:**
 ```bash
 # Check database exists
-./bamp-mysql.sh list
+./bamp-mysql list
 
 # Verify file format
 file backup.sql.gz
 
 # Import with verbose output
-./bamp-mysql.sh -v import myapp backup.sql
+./bamp-mysql -v import myapp backup.sql
 
 # Check for corruption
-./bamp-mysql.sh check myapp
+./bamp-mysql check myapp
 ```
 
 ### Service Management
@@ -595,13 +595,13 @@ dig myapp.test
 
 ```bash
 # Check database sizes
-./bamp-mysql.sh list
+./bamp-mysql list
 
 # Optimize slow databases
-./bamp-mysql.sh optimize large_database
+./bamp-mysql optimize large_database
 
 # Check for table corruption
-./bamp-mysql.sh check problematic_database
+./bamp-mysql check problematic_database
 
 # Monitor MySQL performance
 mysql -e "SHOW PROCESSLIST;"
@@ -806,12 +806,12 @@ max_connections=200
 ps aux | grep httpd
 
 # Check MySQL performance
-./bamp-mysql.sh status
+./bamp-mysql status
 mysql -e "SHOW PROCESSLIST;"
 
 # Database maintenance
-./bamp-mysql.sh optimize myapp
-./bamp-mysql.sh check myapp
+./bamp-mysql optimize myapp
+./bamp-mysql check myapp
 
 # Monitor file changes
 brew install fswatch
@@ -822,11 +822,11 @@ fswatch /Users/yourname/www/
 
 ```bash
 # Regular maintenance routine
-./bamp-mysql.sh optimize myapp
-./bamp-mysql.sh check myapp
+./bamp-mysql optimize myapp
+./bamp-mysql check myapp
 
 # Analyze database sizes
-./bamp-mysql.sh list
+./bamp-mysql list
 
 # Compress old backups
 gzip ~/backups/*.sql
@@ -857,17 +857,17 @@ find ~/backups/ -name "*.sql.gz" -mtime +30 -delete
 
 3. **Install BAMP:**
    ```bash
-   ./bamp.sh
+   ./bamp
    ```
 
 4. **Import databases:**
    ```bash
-   ./bamp-mysql.sh import database_name backup.sql
+   ./bamp-mysql import database_name backup.sql
    ```
 
 5. **Recreate virtual hosts:**
    ```bash
-   ./bamp-vhost.sh myapp /path/to/public
+   ./bamp-vhost myapp /path/to/public
    ```
 
 ### From Laravel Valet
@@ -879,13 +879,13 @@ find ~/backups/ -name "*.sql.gz" -mtime +30 -delete
 
 2. **Install BAMP:**
    ```bash
-   ./bamp.sh
+   ./bamp
    ```
 
 3. **Recreate projects:**
    ```bash
    # For each projects from valet links
-   ./bamp-vhost.sh sitename /path/to/project/public
+   ./bamp-vhost sitename /path/to/project/public
    ```
 
 ### From Docker
@@ -899,33 +899,33 @@ find ~/backups/ -name "*.sql.gz" -mtime +30 -delete
 
 3. **Install BAMP:**
    ```bash
-   ./bamp.sh
+   ./bamp
    ```
 
 4. **Import databases and setup matching configuration:**
    ```bash
-   ./bamp-mysql.sh import database backup.sql
+   ./bamp-mysql import database backup.sql
    ```
 
 ---
 
 ## 📊 Comparison
 
-| Feature | BAMP | MAMP Pro | Laravel Valet | Docker |
-|---------|------|----------|---------------|--------|
-| **Cost** | Free | $59-99 | Free | Free |
-| **Multiple PHP** | ✅ | ✅ | ✅ | ✅ |
-| **SSL Support** | ✅ Wildcard | ✅ | ✅ | Manual |
-| **Database Tools** | ✅ Complete | ✅ | ❌ | Manual |
-| **GUI** | CLI | ✅ | CLI | CLI/GUI |
-| **Resource Usage** | Low | High | Low | Medium |
-| **Customization** | High | Medium | Low | High |
-| **Team Sharing** | ✅ | Limited | Limited | ✅ |
-| **Clean Uninstall** | ✅ | ❌ | ✅ | ✅ |
-| **Native Performance** | ✅ | ✅ | ✅ | ❌ |
-| **Backup Tools** | ✅ | ✅ | ❌ | Manual |
-| **Import/Export** | ✅ | Basic | ❌ | Manual |
-| **Maintenance Tools** | ✅ | ❌ | ❌ | Manual |
+| Feature                | BAMP       | MAMP Pro | Laravel Valet | Docker  |
+| ---------------------- | ---------- | -------- | ------------- | ------- |
+| **Cost**               | Free       | $59-99   | Free          | Free    |
+| **Multiple PHP**       | ✅          | ✅        | ✅             | ✅       |
+| **SSL Support**        | ✅ Wildcard | ✅        | ✅             | Manual  |
+| **Database Tools**     | ✅ Complete | ✅        | ❌             | Manual  |
+| **GUI**                | CLI        | ✅        | CLI           | CLI/GUI |
+| **Resource Usage**     | Low        | High     | Low           | Medium  |
+| **Customization**      | High       | Medium   | Low           | High    |
+| **Team Sharing**       | ✅          | Limited  | Limited       | ✅       |
+| **Clean Uninstall**    | ✅          | ❌        | ✅             | ✅       |
+| **Native Performance** | ✅          | ✅        | ✅             | ❌       |
+| **Backup Tools**       | ✅          | ✅        | ❌             | Manual  |
+| **Import/Export**      | ✅          | Basic    | ❌             | Manual  |
+| **Maintenance Tools**  | ✅          | ❌        | ❌             | Manual  |
 
 ---
 
@@ -954,7 +954,7 @@ find ~/backups/ -name "*.sql.gz" -mtime +30 -delete
 
 ### Documentation
 - 📖 **This README** - Comprehensive guide
-- 💬 **Built-in help** - `bamp --help`, `./bamp-mysql.sh --help`
+- 💬 **Built-in help** - `bamp --help`, `./bamp-mysql --help`
 - 🎯 **Examples** - Included throughout scripts
 
 ### Community
