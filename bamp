@@ -886,10 +886,18 @@ ensure_intl_extension() {
 
     [[ -x "$php_bin" ]] || return 0
 
+    # Capture the built-in module list first. Piping straight into `grep -q`
+    # is unsafe here: grep exits on the first match and closes the pipe, so
+    # under `set -o pipefail` php dies with SIGPIPE and the pipeline reports
+    # failure — flipping us onto the wrong branch. A here-string has no
+    # upstream process to signal.
+    local builtin_modules
+    builtin_modules="$("$php_bin" -n -m 2>/dev/null)"
+
     # If intl is already active (statically compiled or loaded elsewhere),
     # make sure we didn't previously add a duplicate `extension=intl` line
     # that dlopen-fails, and stop here.
-    if "$php_bin" -n -m 2>/dev/null | grep -qi '^intl$'; then
+    if grep -qi '^intl$' <<<"$builtin_modules"; then
         if [[ -f "$php_ini" ]] && grep -Eq '^[[:space:]]*extension[[:space:]]*=[[:space:]]*"?intl"?[[:space:]]*$' "$php_ini"; then
             sed -E -i.tmp '/^[[:space:]]*extension[[:space:]]*=[[:space:]]*"?intl"?[[:space:]]*$/d' "$php_ini"
             rm -f "${php_ini}.tmp"
@@ -1308,29 +1316,20 @@ EOF
     log_info "Updated $shell_profile to use PHP ${php_version}"
 }
 
-source_shell_profile() {
+announce_shell_reload() {
     local shell_profile="$1"
 
     if [[ -z "$shell_profile" ]] || [[ ! -f "$shell_profile" ]]; then
         return 0
     fi
 
-    if [[ "$DRY_RUN" == true ]]; then
-        log_info "Would source $shell_profile to apply changes"
-        return 0
-    fi
-
-    log_info "Applying shell configuration changes..."
-
-    # Try to source the profile in the current shell
-    if source "$shell_profile" 2>/dev/null; then
-        log_success "Shell configuration reloaded successfully"
-        return 0
-    else
-        log_warning "Could not reload shell configuration automatically"
-        log_info "Run 'source $shell_profile' manually to apply changes"
-        return 1
-    fi
+    # NOTE: bamp runs as a child process, so it cannot change the PATH of the
+    # terminal that launched it — sourcing here would only affect this dying
+    # subshell. The user has to reload their own shell.
+    echo
+    log_warning "Your current terminal still uses the old PHP until you reload it:"
+    echo "  • Run: ${CYAN}exec ${SHELL##*/}${NC}   (or open a new terminal)"
+    echo "  • Or:  ${CYAN}source ${shell_profile}${NC}"
 }
 
 create_php_aliases() {
@@ -1657,21 +1656,18 @@ main() {
     if [[ "$DRY_RUN" == true ]]; then
         log_success "Dry run completed - no changes were made"
     else
-        # Source shell profile BEFORE showing completion message
-        # Determine shell profile
+        show_completion_message
+
+        # Determine shell profile and tell the user how to pick up the new PHP
         local shell_profile=""
         case "$SHELL" in
         */zsh) shell_profile="$HOME/.zshrc" ;;
         */bash) shell_profile="$HOME/.bash_profile" ;;
         esac
 
-        # Source once at the end to apply all changes
         if [[ -n "$shell_profile" ]]; then
-            source_shell_profile "$shell_profile"
+            announce_shell_reload "$shell_profile"
         fi
-
-        # THEN show completion message
-        show_completion_message
     fi
 }
 
