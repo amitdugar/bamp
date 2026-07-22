@@ -15,6 +15,9 @@ readonly VERSION="1.0.0"
 # Override global verbose setting if needed
 VERBOSE=false
 
+# Relax InnoDB strict mode during imports (--no-strict)
+NO_STRICT=false
+
 show_usage() {
     cat << 'EOF'
 Usage: ./bamp-mysql [OPTIONS] COMMAND [ARGS]
@@ -43,11 +46,14 @@ OPTIONS:
     -p, --progress              Show progress bars for operations
     --no-compress               Disable compression for dumps
     --compress-level N          Set compression level (1-9, default: 6)
+    --no-strict                 Disable InnoDB strict mode during imports
+                                (fixes "Row size too large" errors)
 
 EXAMPLES:
     # Import operations
     ./bamp-mysql import myapp backup.sql
     ./bamp-mysql import-gz staging production.sql.gz
+    ./bamp-mysql --no-strict import-gz staging wide-tables.sql.gz
 
     # Export operations
     ./bamp-mysql dump myapp
@@ -315,15 +321,21 @@ import_sql_file() {
     # Import the file
     local start_time=$(date +%s)
 
+    local pre_sql=""
+    if [[ "$NO_STRICT" == true ]]; then
+        log_info "InnoDB strict mode disabled for this import"
+        pre_sql="SET SESSION innodb_strict_mode=OFF;"
+    fi
+
     if [[ "$is_compressed" == true ]]; then
         log_progress "Decompressing and importing..."
-        gunzip -c "$sql_file" | $(get_mysql_cmd) "$db_name" || {
+        { echo "$pre_sql"; gunzip -c "$sql_file"; } | $(get_mysql_cmd) "$db_name" || {
             log_error "Failed to import compressed SQL file"
             return 1
         }
     else
         log_progress "Importing..."
-        $(get_mysql_cmd) "$db_name" < "$sql_file" || {
+        { echo "$pre_sql"; cat "$sql_file"; } | $(get_mysql_cmd) "$db_name" || {
             log_error "Failed to import SQL file"
             return 1
         }
@@ -792,6 +804,10 @@ main() {
                 fi
                 compress_level="$2"
                 shift 2
+                ;;
+            --no-strict)
+                NO_STRICT=true
+                shift
                 ;;
             -*)
                 log_error "Unknown option: $1"
